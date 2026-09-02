@@ -97,6 +97,23 @@ export const documents: DocumentItem[] = [
   { id: 'd6', name: 'Linear Regression — Notes', type: 'pdf', course: 'CS509', size: '2.1 MB', uploadedAt: '1 week ago', uploadedBy: 'Dr. Kavya Reddy', pages: 19, status: 'approved' },
 ];
 
+export type Assignment = {
+  id: string;
+  title: string;
+  course: string;
+  dueDate: string;
+  status: 'pending' | 'submitted' | 'graded';
+  priority: 'high' | 'medium' | 'low';
+};
+
+export const assignments: Assignment[] = [
+  { id: 'a1', title: 'Graph Algorithms Assignment', course: 'CS501', dueDate: 'Due in 2 days', status: 'pending', priority: 'high' },
+  { id: 'a2', title: 'DBMS Normalization Report', course: 'CS503', dueDate: 'Due in 5 days', status: 'pending', priority: 'medium' },
+  { id: 'a3', title: 'OS Process Scheduling Lab', course: 'CS505', dueDate: 'Due tomorrow', status: 'pending', priority: 'high' },
+  { id: 'a4', title: 'Computer Networks Mini Project', course: 'CS507', dueDate: 'Due in 1 week', status: 'submitted', priority: 'medium' },
+  { id: 'a5', title: 'Discrete Mathematics Problem Set', course: 'MA501', dueDate: 'Due in 3 days', status: 'pending', priority: 'low' },
+];
+
 export type Quiz = {
   id: string;
   title: string;

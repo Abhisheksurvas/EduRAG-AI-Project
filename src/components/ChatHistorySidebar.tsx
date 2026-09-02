@@ -187,17 +187,6 @@ export function ChatHistorySidebar({
       {/* Header */}
       <div className="p-3 border-b border-neutral-200 space-y-2">
         <div className="flex items-center gap-1">
-          {onClose && (
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close chat history"
-              title="Close chat history"
-              className="grid h-9 w-9 shrink-0 place-items-center rounded-xl text-neutral-500 hover:bg-neutral-100 hover:text-primary-600 transition-colors"
-            >
-              <PanelLeftClose className="h-5 w-5" />
-            </button>
-          )}
           <button
             type="button"
             onClick={handleNewChat}
@@ -224,6 +213,17 @@ export function ChatHistorySidebar({
           >
             <Search className="h-4 w-4" />
           </button>
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close chat history"
+              title="Close chat history"
+              className="grid h-9 w-9 shrink-0 place-items-center rounded-xl text-neutral-500 hover:bg-neutral-100 hover:text-primary-600 transition-colors"
+            >
+              <PanelLeftClose className="h-5 w-5" />
+            </button>
+          )}
         </div>
         {isSearchActive && (
           <div className="relative">

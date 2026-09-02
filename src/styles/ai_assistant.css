@@ -1,0 +1,840 @@
+/* =====================================================
+   EduRAG AI Study Assistant — ChatGPT-style UI
+   Fully Light/Dark aware via Tailwind tokens + .dark
+   ===================================================== */
+
+/* Layout root */
+.aisa-root {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.25rem;
+  min-height: calc(100vh - 9rem);
+}
+
+@media (min-width: 1024px) {
+  .aisa-root {
+    grid-template-columns: 18rem 1fr;
+    align-items: stretch;
+  }
+}
+
+/* ----- ChatGPT-style History Sidebar ----- */
+.aisa-history {
+  display: flex;
+  flex-direction: column;
+  background-color: var(--color-neutral-50);
+  border: 1px solid var(--color-neutral-200);
+  border-radius: 1rem;
+  overflow: hidden;
+  height: 100%;
+  min-height: 70vh;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+.dark .aisa-history {
+  background-color: var(--color-neutral-100);
+  border-color: var(--color-neutral-200);
+}
+
+.aisa-history-header {
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--color-neutral-200);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.dark .aisa-history-header { border-bottom-color: var(--color-neutral-200); }
+
+.aisa-history-row {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+.aisa-icon-btn {
+  display: grid;
+  place-items: center;
+  height: 2.25rem;
+  width: 2.25rem;
+  border-radius: 0.75rem;
+  color: var(--color-neutral-500);
+  background: transparent;
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.aisa-icon-btn:hover {
+  background-color: var(--color-neutral-100);
+  color: var(--color-primary-600);
+  border-color: var(--color-neutral-200);
+}
+.dark .aisa-icon-btn { color: var(--color-neutral-500); }
+.dark .aisa-icon-btn:hover {
+  background-color: var(--color-neutral-200);
+  color: var(--color-primary-400);
+  border-color: var(--color-neutral-300);
+}
+
+.aisa-new-chat-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  height: 2.25rem;
+  border-radius: 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  background-color: var(--color-neutral-100);
+  color: var(--color-neutral-700);
+  border: 1px solid var(--color-neutral-200);
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+.aisa-new-chat-btn:hover {
+  background-color: var(--color-neutral-200);
+  color: var(--color-neutral-900);
+}
+.dark .aisa-new-chat-btn {
+  background-color: var(--color-neutral-200);
+  color: var(--color-neutral-700);
+  border-color: var(--color-neutral-300);
+}
+.dark .aisa-new-chat-btn:hover {
+  background-color: var(--color-neutral-300);
+  color: var(--color-neutral-900);
+}
+.aisa-new-chat-btn--active {
+  background-color: var(--color-primary-600);
+  color: #fff;
+  border-color: var(--color-primary-600);
+  box-shadow: 0 4px 12px -2px rgba(37, 99, 235, 0.4);
+}
+.dark .aisa-new-chat-btn--active {
+  background-color: var(--color-primary-600);
+  color: #fff;
+}
+
+.aisa-search-input {
+  width: 100%;
+  height: 2.25rem;
+  padding: 0 0.75rem 0 2.25rem;
+  font-size: 0.875rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--color-neutral-300);
+  background-color: #fff;
+  color: var(--color-neutral-900);
+  outline: none;
+  transition: all 0.2s ease;
+}
+.aisa-search-input::placeholder { color: var(--color-neutral-400); }
+.aisa-search-input:focus {
+  border-color: var(--color-primary-400);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+}
+.dark .aisa-search-input {
+  background-color: var(--color-neutral-200);
+  border-color: var(--color-neutral-300);
+  color: var(--color-neutral-900);
+}
+.dark .aisa-search-input::placeholder { color: var(--color-neutral-400); }
+.dark .aisa-search-input:focus {
+  border-color: var(--color-primary-400);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.28);
+}
+
+.aisa-history-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.5rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.aisa-history-item {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.625rem 0.75rem;
+  border-radius: 0.75rem;
+  font-size: 0.875rem;
+  cursor: pointer;
+  color: var(--color-neutral-800);
+  background: transparent;
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
+  text-align: left;
+  width: 100%;
+}
+.aisa-history-item:hover {
+  background-color: var(--color-neutral-100);
+}
+.aisa-history-item--active {
+  background-color: var(--color-primary-100);
+  border-color: var(--color-primary-200);
+  color: var(--color-primary-800);
+}
+.dark .aisa-history-item { color: var(--color-neutral-800); }
+.dark .aisa-history-item:hover { background-color: var(--color-neutral-200); }
+.dark .aisa-history-item--active {
+  background-color: rgba(59, 130, 246, 0.18);
+  border-color: rgba(59, 130, 246, 0.4);
+  color: var(--color-primary-300);
+}
+
+.aisa-history-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.aisa-history-time {
+  font-size: 0.6875rem;
+  color: var(--color-neutral-500);
+  margin-top: 2px;
+}
+.dark .aisa-history-time { color: var(--color-neutral-500); }
+
+.aisa-history-actions {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+  display: flex;
+  gap: 0.125rem;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.aisa-history-item:hover .aisa-history-actions,
+.aisa-history-item--active .aisa-history-actions {
+  opacity: 1;
+}
+.aisa-history-action-btn {
+  padding: 0.25rem;
+  border-radius: 0.5rem;
+  color: var(--color-neutral-400);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.aisa-history-action-btn:hover {
+  background-color: var(--color-neutral-200);
+  color: var(--color-neutral-700);
+}
+.dark .aisa-history-action-btn:hover {
+  background-color: var(--color-neutral-300);
+  color: var(--color-neutral-900);
+}
+
+/* ----- Main Chat Panel ----- */
+.aisa-main {
+  display: flex;
+  flex-direction: column;
+  background-color: #fff;
+  border: 1px solid var(--color-neutral-200);
+  border-radius: 1.25rem;
+  overflow: hidden;
+  min-height: 70vh;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+.dark .aisa-main {
+  background-color: var(--color-neutral-100);
+  border-color: var(--color-neutral-200);
+}
+
+.aisa-main-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--color-neutral-200);
+  background: linear-gradient(180deg, #fff 0%, var(--color-neutral-50) 100%);
+}
+.dark .aisa-main-header {
+  border-bottom-color: var(--color-neutral-200);
+  background: linear-gradient(180deg, var(--color-neutral-100) 0%, var(--color-neutral-100) 100%);
+}
+
+.aisa-brand-block {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+.aisa-brand-icon {
+  display: grid;
+  place-items: center;
+  height: 2.5rem;
+  width: 2.5rem;
+  border-radius: 0.875rem;
+  background: linear-gradient(135deg, var(--color-primary-500), var(--color-primary-700));
+  color: #fff;
+  box-shadow: 0 6px 18px -6px rgba(37, 99, 235, 0.5);
+}
+.dark .aisa-brand-icon {
+  background: linear-gradient(135deg, var(--color-primary-500), var(--color-primary-700));
+}
+
+.aisa-brand-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  color: var(--color-neutral-900);
+  font-size: 1rem;
+  line-height: 1.2;
+}
+.dark .aisa-brand-title { color: var(--color-neutral-900); }
+
+.aisa-brand-subtitle {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.75rem;
+  color: var(--color-success-600);
+  margin-top: 2px;
+}
+.dark .aisa-brand-subtitle { color: var(--color-success-500); }
+
+.aisa-online-dot {
+  height: 0.4375rem;
+  width: 0.4375rem;
+  border-radius: 999px;
+  background-color: var(--color-success-500);
+  animation: pulseSoft 2s infinite;
+}
+
+/* Messages area */
+.aisa-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  background-color: var(--color-neutral-50);
+}
+.dark .aisa-messages {
+  background-color: var(--color-neutral-100);
+}
+
+.aisa-welcome {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 2rem 1rem;
+  text-align: center;
+}
+.aisa-welcome-icon {
+  display: grid;
+  place-items: center;
+  height: 4rem;
+  width: 4rem;
+  border-radius: 1.25rem;
+  background: linear-gradient(135deg, var(--color-primary-100), var(--color-primary-200));
+  color: var(--color-primary-700);
+  margin: 0 auto 1rem;
+  animation: floaty 5s ease-in-out infinite;
+}
+.dark .aisa-welcome-icon {
+  background: linear-gradient(135deg, rgba(59,130,246,0.2), rgba(59,130,246,0.35));
+  color: var(--color-primary-300);
+}
+.aisa-welcome-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  color: var(--color-neutral-900);
+  font-size: 1.5rem;
+}
+.dark .aisa-welcome-title { color: var(--color-neutral-900); }
+.aisa-welcome-sub {
+  color: var(--color-neutral-500);
+  font-size: 0.875rem;
+  margin-top: 0.5rem;
+  max-width: 32rem;
+}
+.dark .aisa-welcome-sub { color: var(--color-neutral-500); }
+
+/* Message bubble row */
+.aisa-msg {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  animation: fadeInUp 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.aisa-msg--user {
+  flex-direction: row-reverse;
+}
+
+.aisa-avatar {
+  display: grid;
+  place-items: center;
+  height: 2rem;
+  width: 2rem;
+  border-radius: 0.625rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  flex-shrink: 0;
+  font-family: var(--font-display);
+}
+.aisa-avatar--user {
+  background-color: var(--color-neutral-200);
+  color: var(--color-neutral-600);
+}
+.dark .aisa-avatar--user {
+  background-color: var(--color-neutral-200);
+  color: var(--color-neutral-700);
+}
+.aisa-avatar--bot {
+  background: linear-gradient(135deg, var(--color-primary-500), var(--color-primary-700));
+  color: #fff;
+}
+
+.aisa-bubble {
+  max-width: 80%;
+  border-radius: 1rem;
+  padding: 0.75rem 1rem;
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  white-space: pre-line;
+  word-wrap: break-word;
+}
+.aisa-bubble--user {
+  background-color: var(--color-primary-600);
+  color: #fff;
+  border-bottom-right-radius: 0.25rem;
+  box-shadow: 0 4px 12px -4px rgba(37, 99, 235, 0.35);
+}
+.dark .aisa-bubble--user {
+  background-color: var(--color-primary-600);
+  color: #fff;
+}
+.aisa-bubble--bot {
+  background-color: #fff;
+  color: var(--color-neutral-800);
+  border: 1px solid var(--color-neutral-200);
+  border-bottom-left-radius: 0.25rem;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+.dark .aisa-bubble--bot {
+  background-color: var(--color-neutral-200);
+  color: var(--color-neutral-900);
+  border-color: var(--color-neutral-300);
+}
+
+/* Source references */
+.aisa-sources {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--color-neutral-200);
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+.dark .aisa-sources { border-top-color: var(--color-neutral-300); }
+
+.aisa-sources-label {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--color-neutral-500);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.dark .aisa-sources-label { color: var(--color-neutral-500); }
+
+.aisa-source-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4375rem 0.625rem;
+  background-color: var(--color-neutral-50);
+  border: 1px solid var(--color-neutral-200);
+  border-radius: 0.625rem;
+  font-size: 0.75rem;
+  transition: all 0.2s ease;
+}
+.aisa-source-chip:hover {
+  background-color: var(--color-primary-50);
+  border-color: var(--color-primary-200);
+}
+.dark .aisa-source-chip {
+  background-color: var(--color-neutral-100);
+  border-color: var(--color-neutral-300);
+}
+.dark .aisa-source-chip:hover {
+  background-color: rgba(59, 130, 246, 0.15);
+  border-color: rgba(59, 130, 246, 0.4);
+}
+
+.aisa-source-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+  color: var(--color-neutral-800);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dark .aisa-source-name { color: var(--color-neutral-900); }
+
+.aisa-source-page {
+  flex-shrink: 0;
+  font-size: 0.6875rem;
+  color: var(--color-neutral-500);
+  padding: 0.125rem 0.4375rem;
+  border-radius: 0.375rem;
+  background-color: var(--color-neutral-100);
+  font-weight: 600;
+}
+.dark .aisa-source-page {
+  background-color: var(--color-neutral-300);
+  color: var(--color-neutral-700);
+}
+
+/* Typing / thinking dots */
+.aisa-typing {
+  display: flex;
+  gap: 0.25rem;
+  align-items: center;
+  padding: 0.5rem 0;
+}
+.aisa-typing-dot {
+  display: inline-block;
+  height: 0.4375rem;
+  width: 0.4375rem;
+  border-radius: 999px;
+  background-color: var(--color-neutral-400);
+  animation: typingBounce 1.2s infinite ease-in-out;
+}
+.dark .aisa-typing-dot { background-color: var(--color-neutral-500); }
+
+/* Suggested questions */
+.aisa-suggested {
+  padding: 0.5rem 1.25rem 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  border-top: 1px solid var(--color-neutral-200);
+  background-color: var(--color-neutral-50);
+}
+.dark .aisa-suggested {
+  border-top-color: var(--color-neutral-200);
+  background-color: var(--color-neutral-100);
+}
+
+.aisa-suggested-label {
+  width: 100%;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-neutral-500);
+  margin-bottom: 0.125rem;
+}
+.dark .aisa-suggested-label { color: var(--color-neutral-500); }
+
+.aisa-suggested-chip {
+  font-size: 0.8125rem;
+  padding: 0.4375rem 0.75rem;
+  border-radius: 999px;
+  background-color: var(--color-primary-50);
+  color: var(--color-primary-700);
+  border: 1px solid var(--color-primary-200);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-weight: 500;
+}
+.aisa-suggested-chip:hover {
+  background-color: var(--color-primary-100);
+  border-color: var(--color-primary-300);
+  transform: translateY(-1px);
+}
+.dark .aisa-suggested-chip {
+  background-color: rgba(59, 130, 246, 0.12);
+  color: var(--color-primary-300);
+  border-color: rgba(59, 130, 246, 0.35);
+}
+.dark .aisa-suggested-chip:hover {
+  background-color: rgba(59, 130, 246, 0.22);
+  border-color: rgba(59, 130, 246, 0.55);
+}
+
+/* Composer */
+.aisa-composer-wrap {
+  padding: 0.875rem 1.25rem 1rem;
+  border-top: 1px solid var(--color-neutral-200);
+  background-color: #fff;
+}
+.dark .aisa-composer-wrap {
+  border-top-color: var(--color-neutral-200);
+  background-color: var(--color-neutral-100);
+}
+
+.aisa-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+  background-color: var(--color-neutral-100);
+  border: 1px solid var(--color-neutral-200);
+  border-radius: 1rem;
+  padding: 0.5rem;
+  transition: all 0.2s ease;
+}
+.aisa-composer:focus-within {
+  border-color: var(--color-primary-400);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.16);
+}
+.dark .aisa-composer {
+  background-color: var(--color-neutral-200);
+  border-color: var(--color-neutral-300);
+}
+.dark .aisa-composer:focus-within {
+  border-color: var(--color-primary-400);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.28);
+}
+
+.aisa-composer-tool-btn {
+  display: grid;
+  place-items: center;
+  height: 2.25rem;
+  width: 2.25rem;
+  border-radius: 0.625rem;
+  color: var(--color-neutral-500);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+.aisa-composer-tool-btn:hover {
+  background-color: var(--color-neutral-200);
+  color: var(--color-primary-600);
+}
+.dark .aisa-composer-tool-btn { color: var(--color-neutral-500); }
+.dark .aisa-composer-tool-btn:hover {
+  background-color: var(--color-neutral-300);
+  color: var(--color-primary-400);
+}
+
+.aisa-composer-textarea {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  font-size: 0.9375rem;
+  color: var(--color-neutral-900);
+  padding: 0.4375rem 0.25rem;
+  font-family: inherit;
+  line-height: 1.5;
+  max-height: 7.5rem;
+  min-height: 1.5rem;
+}
+.aisa-composer-textarea::placeholder { color: var(--color-neutral-400); }
+.dark .aisa-composer-textarea { color: var(--color-neutral-900); }
+.dark .aisa-composer-textarea::placeholder { color: var(--color-neutral-400); }
+
+.aisa-composer-send {
+  display: grid;
+  place-items: center;
+  height: 2.25rem;
+  width: 2.25rem;
+  border-radius: 0.625rem;
+  background-color: var(--color-primary-600);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 12px -4px rgba(37, 99, 235, 0.4);
+}
+.aisa-composer-send:hover:not(:disabled) {
+  background-color: var(--color-primary-700);
+  transform: translateY(-1px);
+}
+.aisa-composer-send:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+.dark .aisa-composer-send { background-color: var(--color-primary-600); }
+.dark .aisa-composer-send:hover:not(:disabled) { background-color: var(--color-primary-700); }
+
+/* Attachment chips above composer */
+.aisa-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin-bottom: 0.5rem;
+}
+.aisa-attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.75rem;
+  padding: 0.375rem 0.625rem;
+  border-radius: 0.5rem;
+  background-color: var(--color-primary-50);
+  color: var(--color-primary-700);
+  border: 1px solid var(--color-primary-200);
+  font-weight: 500;
+}
+.dark .aisa-attachment-chip {
+  background-color: rgba(59, 130, 246, 0.18);
+  color: var(--color-primary-300);
+  border-color: rgba(59, 130, 246, 0.4);
+}
+.aisa-attachment-chip button {
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.7;
+  transition: opacity 0.2s ease;
+}
+.aisa-attachment-chip button:hover { opacity: 1; }
+
+/* Hidden file input */
+.aisa-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Responsive: collapse history to a slide-in panel on mobile */
+@media (max-width: 1023px) {
+  .aisa-history {
+    position: fixed;
+    top: 4rem;
+    left: 0.75rem;
+    right: 0.75rem;
+    z-index: 40;
+    max-height: calc(100vh - 6rem);
+    box-shadow: 0 24px 48px -16px rgba(0, 0, 0, 0.35);
+    transform: translateY(-12px);
+    opacity: 0;
+    pointer-events: none;
+    transition: transform 0.3s ease, opacity 0.3s ease;
+  }
+  .aisa-history--open {
+    transform: translateY(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+/* Pulse dot for online status */
+@keyframes pulseSoft {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(0.9); }
+}
+
+/* ===== Navbar polish (DashboardShell) ===== */
+.aisa-navbar {
+  background-color: rgba(255, 255, 255, 0.82);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--color-neutral-200);
+  color: var(--color-neutral-900);
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+.dark .aisa-navbar {
+  background-color: rgba(11, 17, 32, 0.72);
+  border-bottom-color: var(--color-neutral-200);
+  color: var(--color-neutral-100);
+}
+
+.aisa-navbar-text { color: var(--color-neutral-900); }
+.dark .aisa-navbar-text { color: var(--color-neutral-100); }
+.aisa-navbar-sub { color: var(--color-neutral-400); }
+.dark .aisa-navbar-sub { color: var(--color-neutral-500); }
+
+.aisa-navbar-search {
+  background-color: var(--color-neutral-100);
+  border: 1px solid var(--color-neutral-200);
+}
+.dark .aisa-navbar-search {
+  background-color: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+.aisa-navbar-search input {
+  color: var(--color-neutral-800);
+}
+.dark .aisa-navbar-search input { color: var(--color-neutral-100); }
+.aisa-navbar-search input::placeholder { color: var(--color-neutral-400); }
+.dark .aisa-navbar-search input::placeholder { color: var(--color-neutral-500); }
+.aisa-navbar-search svg { color: var(--color-neutral-400); }
+.dark .aisa-navbar-search svg { color: var(--color-neutral-500); }
+
+.aisa-navbar-icon-btn {
+  color: var(--color-neutral-500);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 0.75rem;
+  transition: all 0.2s ease;
+}
+.aisa-navbar-icon-btn:hover {
+  background-color: var(--color-neutral-100);
+  color: var(--color-neutral-900);
+}
+.dark .aisa-navbar-icon-btn { color: var(--color-neutral-400); }
+.dark .aisa-navbar-icon-btn:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: var(--color-neutral-100);
+}
+
+.aisa-navbar-theme-btn {
+  color: var(--color-neutral-500);
+  background-color: transparent;
+  border: 1px solid transparent;
+}
+.aisa-navbar-theme-btn:hover {
+  background-color: var(--color-neutral-100);
+  color: var(--color-warning-600);
+  border-color: var(--color-neutral-200);
+}
+.dark .aisa-navbar-theme-btn { color: var(--color-neutral-400); }
+.dark .aisa-navbar-theme-btn:hover {
+  background-color: rgba(255, 255, 255, 0.08);
+  color: #fbbf24;
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.aisa-navbar-notif-dot {
+  background-color: var(--color-error-500);
+  box-shadow: 0 0 0 2px #fff;
+}
+.dark .aisa-navbar-notif-dot { box-shadow: 0 0 0 2px var(--color-neutral-950); }
+
+.aisa-navbar-dropdown {
+  background-color: #fff;
+  border: 1px solid var(--color-neutral-200);
+}
+.dark .aisa-navbar-dropdown {
+  background-color: var(--color-neutral-900);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+.aisa-navbar-dropdown-header {
+  border-bottom: 1px solid var(--color-neutral-200);
+}
+.dark .aisa-navbar-dropdown-header { border-bottom-color: rgba(255, 255, 255, 0.08); }
+.aisa-navbar-dropdown-item {
+  color: var(--color-neutral-600);
+}
+.aisa-navbar-dropdown-item:hover {
+  background-color: var(--color-neutral-100);
+  color: var(--color-neutral-900);
+}
+.dark .aisa-navbar-dropdown-item { color: var(--color-neutral-300); }
+.dark .aisa-navbar-dropdown-item:hover {
+  background-color: rgba(255, 255, 255, 0.08);
+  color: var(--color-neutral-100);
+}
