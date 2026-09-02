@@ -1,0 +1,21 @@
+# python path set temporary :
+set PATH=C:\Users\DELL\AppData\Local\Programs\Python\Python314;
+
+# npx/npm Path:- 
+set "PATH=%PATH%;C:\Program Files\nodejs"
+
+# Antigravity(agy) temporary PATH:-
+  set "PATH=%PATH%;C:\Users\DELL\AppData\Local\agy\bin"
+
+
+# --- Start EduRAG Backend (Python http.server on port 8000) ---
+# Run from project root so backend/.env is loaded for AI_API_KEY:
+#   python backend/app.py
+#
+# --- Start EduRAG Frontend (Vite dev server on port 5173) ---
+#   npm run dev
+#
+# --- Alternative UI ---
+# streamlit run streamlit_app.py
+# OR
+# python -m streamlit run streamlit_app.py

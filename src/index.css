@@ -1,0 +1,246 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+
+  /* Primary — blue */
+  --color-primary-50: #eff6ff;
+  --color-primary-100: #dbeafe;
+  --color-primary-200: #bfdbfe;
+  --color-primary-300: #93c5fd;
+  --color-primary-400: #60a5fa;
+  --color-primary-500: #3b82f6;
+  --color-primary-600: #2563eb;
+  --color-primary-700: #1d4ed8;
+  --color-primary-800: #1e40af;
+  --color-primary-900: #1e3a8a;
+  --color-primary-950: #172554;
+
+  /* Secondary — teal */
+  --color-secondary-50: #effcf9;
+  --color-secondary-100: #cbf8ef;
+  --color-secondary-200: #97f0e0;
+  --color-secondary-300: #5be2cd;
+  --color-secondary-400: #2ccbb4;
+  --color-secondary-500: #14b099;
+  --color-secondary-600: #0d8e7e;
+  --color-secondary-700: #117066;
+  --color-secondary-800: #135a53;
+  --color-secondary-900: #134b45;
+  --color-secondary-950: #052c28;
+
+  /* Accent — amber */
+  --color-accent-50: #fffaeb;
+  --color-accent-100: #fff0c6;
+  --color-accent-200: #ffdf88;
+  --color-accent-300: #ffc74a;
+  --color-accent-400: #ffab20;
+  --color-accent-500: #f98708;
+  --color-accent-600: #dd6602;
+  --color-accent-700: #b74706;
+  --color-accent-800: #94370c;
+  --color-accent-900: #7a2e0d;
+
+  /* Success */
+  --color-success-50: #ecfdf5;
+  --color-success-100: #d1fae5;
+  --color-success-200: #a7f3d0;
+  --color-success-300: #6ee7b7;
+  --color-success-400: #34d399;
+  --color-success-500: #10b981;
+  --color-success-600: #059669;
+  --color-success-700: #047857;
+  --color-success-800: #065f46;
+  --color-success-900: #064e3b;
+
+  /* Warning */
+  --color-warning-50: #fffbeb;
+  --color-warning-100: #fef3c7;
+  --color-warning-200: #fde68a;
+  --color-warning-300: #fcd34d;
+  --color-warning-400: #fbbf24;
+  --color-warning-500: #f59e0b;
+  --color-warning-600: #d97706;
+  --color-warning-700: #b45309;
+  --color-warning-800: #92400e;
+  --color-warning-900: #78350f;
+
+  /* Error */
+  --color-error-50: #fef2f2;
+  --color-error-100: #fee2e2;
+  --color-error-200: #fecaca;
+  --color-error-300: #fca5a5;
+  --color-error-400: #f87171;
+  --color-error-500: #ef4444;
+  --color-error-600: #dc2626;
+  --color-error-700: #b91c1c;
+  --color-error-800: #991b1b;
+  --color-error-900: #7f1d1d;
+
+  /* Neutral — slate */
+  --color-neutral-50: #f8fafc;
+  --color-neutral-100: #f1f5f9;
+  --color-neutral-200: #e2e8f0;
+  --color-neutral-300: #cbd5e1;
+  --color-neutral-400: #94a3b8;
+  --color-neutral-500: #64748b;
+  --color-neutral-600: #475569;
+  --color-neutral-700: #334155;
+  --color-neutral-800: #1e293b;
+  --color-neutral-900: #0f172a;
+  --color-neutral-950: #020617;
+}
+
+html {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-neutral-50);
+  color: var(--color-neutral-900);
+}
+
+h1, h2, h3, h4, h5 {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-neutral-300);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-neutral-400);
+  background-clip: content-box;
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes pulseSoft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+@keyframes shimmer {
+  100% { transform: translateX(100%); }
+}
+@keyframes floaty {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+@keyframes typingBounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.35; }
+  30% { transform: translateY(-6px); opacity: 1; }
+}
+.animate-typing > span {
+  display: inline-block;
+  animation: typingBounce 1.2s infinite ease-in-out;
+}
+
+.animate-fade-in-up { animation: fadeInUp 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.animate-fade-in { animation: fadeIn 0.4s ease both; }
+.animate-slide-in { animation: slideInRight 0.4s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.animate-floaty { animation: floaty 6s ease-in-out infinite; }
+
+.glass {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.card-shadow {
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 8px 24px -12px rgba(16, 24, 40, 0.12);
+}
+.card-shadow-lg {
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 24px 48px -20px rgba(16, 24, 40, 0.22);
+}
+
+/* ===== Dark mode (class strategy) =====
+   Redefine the color tokens under .dark. In Tailwind v4 every utility
+   (bg-white, bg-white/80, from-white, text-neutral-900, borders, …) resolves
+   from these tokens, so redefining them flips the ENTIRE app at once — including
+   opacity variants and gradients — without touching component markup.
+   Palette: bg #0B1120 · cards #111827 · panels #172033 · text #F8FAFC ·
+   muted #94A3B8 · borders #273449 · primary #3B82F6 · hover #60A5FA · success #22C55E */
+.dark {
+  --color-white: #111827;          /* cards */
+  --color-black: #f8fafc;
+  --color-neutral-50: #0b1120;     /* app background */
+  --color-neutral-100: #172033;    /* secondary panels / raised surfaces */
+  --color-neutral-200: #273449;    /* borders / dividers */
+  --color-neutral-300: #334155;
+  --color-neutral-400: #64748b;    /* muted / placeholder */
+  --color-neutral-500: #94a3b8;    /* secondary text */
+  --color-neutral-600: #b8c2d0;
+  --color-neutral-700: #cbd5e1;
+  --color-neutral-800: #e2e8f0;
+  --color-neutral-900: #f8fafc;    /* primary text */
+  --color-neutral-950: #f8fafc;
+
+  /* Primary — blue (lightened for dark surfaces) */
+  --color-primary-50: #172554;
+  --color-primary-100: #1e3a8a;
+  --color-primary-200: #1e40af;
+  --color-primary-300: #1d4ed8;
+  --color-primary-400: #60a5fa;
+  --color-primary-500: #3b82f6;
+  --color-primary-600: #3b82f6;
+  --color-primary-700: #60a5fa;
+  --color-primary-800: #93c5fd;
+  --color-primary-900: #bfdbfe;
+  --color-primary-950: #dbeafe;
+
+  /* Brand text stays readable on dark surfaces */
+  --color-secondary-600: #2ccbb4;
+  --color-secondary-700: #5be2cd;
+  --color-accent-600: #ffab20;
+  --color-accent-700: #ffc74a;
+
+  /* Success */
+  --color-success-500: #22c55e;
+  --color-success-600: #16a34a;
+  --color-success-700: #15803d;
+}
+
+/* Custom (non-utility) dark treatments */
+.dark .glass { background: rgba(11, 17, 32, 0.72); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+.dark .card-shadow,
+.dark .card-shadow-lg { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 24px 48px -20px rgba(0, 0, 0, 0.6); }
+
+/* Avoid a white flash before React applies the .dark class */
+html { color-scheme: light; }
+html.dark { color-scheme: dark; }
+
+/* Smooth, theme-aware transitions — but only after first paint so the saved
+   theme never animates in on load (avoids a flash). */
+html.theme-ready *,
+html.theme-ready *::before,
+html.theme-ready *::after {
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease,
+    fill 0.2s ease, stroke 0.2s ease, box-shadow 0.2s ease;
+}

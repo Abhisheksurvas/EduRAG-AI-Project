@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "skill_overrides": {},
+  "roles": {
+    "planner": {
+      "provider": "anthropic",
+      "model": "Claude Opus 4.6"
+    },
+    "coder": {
+      "provider": "anthropic",
+      "model": "Claude Opus 4.6"
+    },
+    "vision": {
+      "provider": "anthropic",
+      "model": "Claude Opus 4.6"
+    },
+    "general": {
+      "provider": "anthropic",
+      "model": "Claude Opus 4.6"
+    },
+    "agentic": {
+      "provider": "anthropic",
+      "model": "Claude Opus 4.6"
+    }
+  }
+}
