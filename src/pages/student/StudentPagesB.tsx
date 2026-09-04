@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   HelpCircle, Clock, CheckCircle2, XCircle, ChevronRight, ArrowRight,
   Star, RefreshCw, Calendar, Download,
@@ -6,7 +6,7 @@ import {
   Bot, StickyNote, User, Mail, GraduationCap, Award, Lock, Camera,
   Check, AlertCircle, ChevronLeft, Target, Pencil, Sparkles, Plus, X, LoaderCircle,
 } from 'lucide-react';
-import { Card, CardHeader, CardBody, Badge, Button, Progress, StatCard, Avatar, EmptyState, SectionHeader } from '@/components/ui';
+import { Card, CardHeader, CardBody, Badge, Button, Progress, StatCard, Avatar, EmptyState, SectionHeader, ToastContainer, type ToastData } from '@/components/ui';
 import { cn } from '@/lib/utils';
 import {
   loadConversations,
@@ -21,32 +21,90 @@ import {
   fetchQuizQuestions,
   fetchQuizResults,
   fetchNotifications,
+  updateNotification,
+  deleteNotification,
   fetchBookmarks,
   fetchStudentCourses,
   fetchStudentProfile,
   fetchStats,
+  saveQuiz,
+  saveQuizResult,
 } from '@/lib/dataService';
 import {
   suggestedQuestions,
-  quizQuestions,
-  quizzes,
   type ChatMessage,
 } from '@/data/mockData';
 
+function extractJsonBlock(text: string): string | null {
+  const trimmed = text.trim();
+
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced?.[1]) {
+    return fenced[1].trim();
+  }
+
+  const arrayStart = trimmed.indexOf('[');
+  const objectStart = trimmed.indexOf('{');
+  const start = arrayStart >= 0 && (objectStart < 0 || arrayStart < objectStart) ? arrayStart : objectStart;
+  if (start < 0) return null;
+
+  const open = trimmed[start];
+  const close = open === '[' ? ']' : '}';
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < trimmed.length; i += 1) {
+    const char = trimmed[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (char === open) depth += 1;
+    if (char === close) {
+      depth -= 1;
+      if (depth === 0) {
+        return trimmed.slice(start, i + 1);
+      }
+    }
+  }
+
+  return null;
+}
+
 function safeJsonParse(text: string): any[] | null {
-  try {
-    const parsed = JSON.parse(text);
-    return Array.isArray(parsed) ? parsed : null;
-  } catch {
-    const match = text.match(/\[[\s\S]*\]/);
-    if (!match) return null;
+  const parseCandidate = (candidate: string): any[] | null => {
     try {
-      const parsed = JSON.parse(match[0]);
-      return Array.isArray(parsed) ? parsed : null;
+      const parsed = JSON.parse(candidate);
+      if (Array.isArray(parsed)) return parsed;
+      if (parsed && typeof parsed === 'object') {
+        if (Array.isArray(parsed.questions)) return parsed.questions;
+        if (Array.isArray(parsed.quiz)) return parsed.quiz;
+        if (Array.isArray(parsed.items)) return parsed.items;
+        if (parsed.question && Array.isArray(parsed.options)) return [parsed];
+      }
+      return null;
     } catch {
       return null;
     }
-  }
+  };
+
+  const direct = parseCandidate(text.trim());
+  if (direct) return direct;
+
+  const extracted = extractJsonBlock(text);
+  if (!extracted) return null;
+
+  return parseCandidate(extracted);
 }
 
 /* ============ QUIZ CENTER ============ */
@@ -56,7 +114,9 @@ export function StudentQuizzes() {
   const [answers, setAnswers] = useState<Record<number, number>>({});
   const [quizList, setQuizList] = useState<any[]>([]);
   const [questions, setQuestions] = useState<any[]>([]);
+  const [allQuestions, setAllQuestions] = useState<any[]>([]);
   const [results, setResults] = useState<any[]>([]);
+  const [selectedQuiz, setSelectedQuiz] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [genTopic, setGenTopic] = useState('');
   const [genCount, setGenCount] = useState(5);
@@ -66,7 +126,28 @@ export function StudentQuizzes() {
   const [uploadedFile, setUploadedFile] = useState<{ id: string; name: string } | null>(null);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [toasts, setToasts] = useState<ToastData[]>([]);
+  const [remainingSeconds, setRemainingSeconds] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const pushToast = useCallback((message: string, tone: ToastData['tone']) => {
+    const id = `quiz-toast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setToasts(prev => [...prev, { id, message, tone }]);
+  }, []);
+
+  const dismissToast = useCallback((id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
+
+  const reviewQuiz = (quiz: any) => {
+    const sourceQuestions = allQuestions.length > 0 ? allQuestions : questions;
+    const quizQuestions = sourceQuestions.filter(question => question.quizId === quiz.id || question.quizId == null);
+    const quizResults = results.filter(result => result.quizId === quiz.id);
+    setSelectedQuiz(quiz);
+    if (quizQuestions.length > 0) setQuestions(quizQuestions);
+    setResults(quizResults);
+    setView('results');
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -81,6 +162,7 @@ export function StudentQuizzes() {
         if (!cancelled) {
           setQuizList(q);
           setQuestions(qq);
+          setAllQuestions(qq);
           setResults(qr);
         }
       } catch (err) {
@@ -92,6 +174,14 @@ export function StudentQuizzes() {
     load();
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    if (view !== 'take' || remainingSeconds <= 0) return;
+    const timer = window.setInterval(() => {
+      setRemainingSeconds(value => Math.max(0, value - 1));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [view, remainingSeconds]);
 
   const uploadDocument = async (file: File) => {
     const allowedExtensions = ['pdf', 'pptx', 'docx', 'txt', 'md', 'csv'];
@@ -141,11 +231,15 @@ export function StudentQuizzes() {
       const material = data.material;
       setUploadedFile({ id: material.id, name: material.name });
       setUploadStatus(`✓ ${file.name} uploaded. Ready to generate quiz.`);
+      pushToast(`"${file.name}" uploaded successfully. You can generate a quiz now.`, 'success');
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         setUploadStatus('Upload timed out. The file may be too large or the server is busy.');
+        pushToast('Upload timed out. Please try again with a smaller file.', 'error');
       } else {
-        setUploadStatus(error instanceof Error ? error.message : 'The document could not be uploaded.');
+        const message = error instanceof Error ? error.message : 'The document could not be uploaded.';
+        setUploadStatus(message);
+        pushToast(message, 'error');
       }
       setUploadedFile(null);
     } finally {
@@ -185,6 +279,8 @@ export function StudentQuizzes() {
           topic: effectiveTopic,
           difficulty: genDifficulty,
           question: prompt,
+          // Keep the uploaded document context while using the AI response for quiz JSON.
+          responseMode: 'both',
           context: uploadedFile ? `Quiz from uploaded document: ${uploadedFile.name}. Topic: ${genTopic || 'general'}` : `Generate a ${genDifficulty} difficulty quiz on ${genTopic}`,
           selectedMaterialIds: uploadedFile ? [uploadedFile.id] : [],
         }),
@@ -194,20 +290,38 @@ export function StudentQuizzes() {
         const parsed = safeJsonParse(data.answer);
         if (!parsed || parsed.length === 0) {
           console.warn('[Quiz] Raw AI response:', data.answer);
-          throw new Error('Could not parse quiz from AI response.');
+          throw new Error('The AI returned an unexpected quiz format. Please try generating the quiz again.');
         }
+        const generatedId = `gq-${Date.now()}`;
         const normalized = parsed.slice(0, Math.max(1, genCount)).map((item: any, idx: number) => ({
           id: `gq-${Date.now()}-${idx}`,
+          quizId: generatedId,
           question: String(item.question || `Question ${idx + 1}`),
           options: Array.isArray(item.options) && item.options.length >= 4 ? item.options.slice(0, 4) : ['Option A', 'Option B', 'Option C', 'Option D'],
           correct: Math.max(0, Math.min(3, Number(item.correct) || 0)),
         }));
-        setGeneratedQuiz({ title: `${effectiveTopic} Quiz`, questions: normalized });
+        const generatedTitle = `${effectiveTopic} Quiz`;
+        const quizRecord = {
+          id: generatedId,
+          title: generatedTitle,
+          course: uploadedFile ? 'From Uploaded File' : 'AI Generated',
+          questions: normalized.length,
+          duration: normalized.length * 2,
+          status: 'upcoming',
+          dueDate: 'Just now',
+          topic: effectiveTopic,
+          userId: getCurrentUserId(),
+        };
+        if (!await saveQuiz(quizRecord, normalized)) {
+          throw new Error('The generated quiz could not be saved.');
+        }
+        setGeneratedQuiz({ title: generatedTitle, questions: normalized });
         setQuestions(normalized);
+        setAllQuestions(current => [...normalized, ...current.filter(question => question.quizId !== generatedId)]);
         setQuizList(current => [
           {
-            id: `gq-${Date.now()}`,
-            title: `${effectiveTopic} Quiz`,
+            id: generatedId,
+            title: generatedTitle,
             course: uploadedFile ? 'From Uploaded File' : 'AI Generated',
             questions: normalized.length,
             duration: normalized.length * 2,
@@ -217,24 +331,31 @@ export function StudentQuizzes() {
           },
           ...current,
         ]);
+        pushToast(
+          uploadedFile
+            ? `Quiz ready from "${uploadedFile.name}".`
+            : 'Quiz generated successfully.',
+          'success',
+        );
       } else {
         throw new Error(data.error || 'Failed to generate quiz');
       }
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to generate quiz. Please try again.');
+      const message = err instanceof Error ? err.message : 'Failed to generate quiz. Please try again.';
+      pushToast(message, 'error');
     } finally {
       setIsGenerating(false);
     }
   };
 
   if (view === 'take') {
-    const targetQuestions = questions.length > 0 ? questions : quizQuestions;
+    const targetQuestions = questions;
     const q = targetQuestions[activeQuiz] || targetQuestions[0];
     return (
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <Button variant="outline" size="sm" icon={ChevronLeft} onClick={() => setView('list')}>Back to Quizzes</Button>
-          <div className="flex items-center gap-2 text-sm text-neutral-500 font-medium"><Clock className="h-4.5 w-4.5" /> 30:00</div>
+          <div className="flex items-center gap-2 text-sm text-neutral-500 font-medium"><Clock className="h-4.5 w-4.5" /> {Math.floor(remainingSeconds / 60).toString().padStart(2, '0')}:{(remainingSeconds % 60).toString().padStart(2, '0')}</div>
         </div>
         <Card className="max-w-3xl mx-auto border-neutral-200 shadow-lg">
           <div className="px-6 py-4 border-b border-neutral-200 flex items-center justify-between bg-neutral-50/50">
@@ -270,17 +391,23 @@ export function StudentQuizzes() {
               {activeQuiz < targetQuestions.length - 1 ? (
                 <Button size="md" icon={ArrowRight} onClick={() => setActiveQuiz(a => a + 1)}>Next</Button>
               ) : (
-                <Button variant="success" size="md" icon={CheckCircle2} onClick={() => {
-                  if (targetQuestions.length > 0 && targetQuestions[0].id.startsWith('gq-')) {
-                    const computed = targetQuestions.map((q: any, idx: number) => ({
+                <Button variant="success" size="md" icon={CheckCircle2} onClick={async () => {
+                  const computed = targetQuestions.map((q: any, idx: number) => ({
                       id: `qr-${q.id}`,
                       quizId: q.id,
                       question: q.question,
                       yourAnswer: q.options[answers[idx] ?? -1] || 'Not answered',
                       correct: (answers[idx] ?? -1) === q.correct,
-                    }));
-                    setResults(computed);
-                  }
+                  }));
+                  setResults(computed);
+                  await saveQuizResult({
+                    id: `result-${Date.now()}`,
+                    quizId: targetQuestions[0]?.quizId || targetQuestions[0]?.id,
+                    userId: getCurrentUserId(),
+                    score: computed.length ? Math.round((computed.filter((item: any) => item.correct).length / computed.length) * 100) : 0,
+                    answers: computed,
+                    completedAt: new Date().toISOString(),
+                  });
                   setView('results');
                 }}>Submit Quiz</Button>
               )}
@@ -308,13 +435,13 @@ export function StudentQuizzes() {
           <StatCard icon={Target} label="Your Score" value={`${score}%`} tone={score >= 80 ? 'success' : score >= 60 ? 'warning' : 'error'} />
           <StatCard icon={CheckCircle2} label="Correct" value={`${correct}/${computedResults.length}`} tone="success" />
           <StatCard icon={XCircle} label="Incorrect" value={computedResults.length - correct} tone="error" />
-          <StatCard icon={Clock} label="Time Taken" value="24:35" tone="primary" />
+          <StatCard icon={Clock} label="Time Limit" value={`${selectedQuiz?.duration || Math.max(1, computedResults.length * 2)} min`} tone="primary" />
         </div>
         <Card className="border-neutral-200 shadow-sm">
           <CardHeader title="Incorrect Answers Review" subtitle="Learn from your mistakes" icon={AlertCircle} />
           <CardBody className="space-y-3">
             {computedResults.filter(r => !r.correct).map(r => {
-              const q = questions.find(qq => qq.id === r.quizId);
+              const q = questions.find(qq => qq.id === r.questionId || qq.id === r.quizId || qq.question === r.question);
               return (
                 <div key={r.id} className="p-4 rounded-xl bg-error-50/50 border border-error-200">
                   <p className="text-sm font-semibold text-neutral-900 mb-2">{r.question}</p>
@@ -337,7 +464,7 @@ export function StudentQuizzes() {
           </CardBody>
         </Card>
         <div className="flex justify-center gap-3">
-          <Button variant="outline" icon={RefreshCw} onClick={() => { setView('take'); setActiveQuiz(0); setAnswers({}); }}>Retake Quiz</Button>
+          <Button variant="outline" icon={RefreshCw} onClick={() => { setView('take'); setActiveQuiz(0); setAnswers({}); setRemainingSeconds(Math.max(60, questions.length * 120)); }}>Retake Quiz</Button>
           <Button icon={ChevronRight} onClick={() => setView('list')}>Back to Quizzes</Button>
         </div>
       </div>
@@ -346,6 +473,7 @@ export function StudentQuizzes() {
 
   return (
     <div className="space-y-6">
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
         <SectionHeader title="Quiz Center" description="Take faculty-provided or RAG-generated quizzes and review your performance" />
       <Card className="border-neutral-200 shadow-sm hover:shadow-md transition-shadow">
         <CardHeader title="Generate Quiz with AI" subtitle="Enter a topic or chapter to create a custom quiz" icon={Bot} />
@@ -433,7 +561,7 @@ export function StudentQuizzes() {
                 {isGenerating ? 'Generating…' : 'Generate Quiz'}
               </Button>
               {generatedQuiz && (
-                <Button variant="outline" icon={ArrowRight} onClick={() => { setView('take'); setActiveQuiz(0); setAnswers({}); }}>
+                <Button variant="outline" icon={ArrowRight} onClick={() => { setView('take'); setActiveQuiz(0); setAnswers({}); setRemainingSeconds(Math.max(60, (generatedQuiz?.questions.length || 1) * 120)); }}>
                   Take Generated Quiz
                 </Button>
               )}
@@ -475,9 +603,9 @@ export function StudentQuizzes() {
             )}
             <p className="text-xs text-neutral-400 mt-3">{quiz.dueDate}</p>
             {quiz.status === 'upcoming' ? (
-              <Button className="w-full mt-4" size="sm" icon={ArrowRight} onClick={() => { setView('take'); setActiveQuiz(0); setAnswers({}); }}>Start Quiz</Button>
+              <Button className="w-full mt-4" size="sm" icon={ArrowRight} onClick={() => { setView('take'); setActiveQuiz(0); setAnswers({}); setRemainingSeconds(Math.max(60, (quiz.duration || quiz.questions * 2) * 60)); }}>Start Quiz</Button>
             ) : (
-              <Button variant="outline" className="w-full mt-4" size="sm" icon={BarChart3} onClick={() => setView('results')}>Correct It</Button>
+              <Button variant="outline" className="w-full mt-4" size="sm" icon={BarChart3} onClick={() => reviewQuiz(quiz)}>Review</Button>
             )}
           </Card>
         ))}
@@ -488,7 +616,7 @@ export function StudentQuizzes() {
         <CardHeader title="Quiz History" subtitle="All your past quiz attempts" icon={Clock} />
         <CardBody>
           <div className="space-y-2">
-            {(quizList.length > 0 ? quizList : quizzes).filter((q: any) => q.status === 'completed').map((quiz: any) => (
+            {quizList.filter((q: any) => q.status === 'completed').map((quiz: any) => (
               <div key={quiz.id} className="flex items-center gap-4 p-4 rounded-xl border border-neutral-200 hover:bg-neutral-50 hover:border-neutral-300 transition-all bg-white">
                 <div className="grid place-items-center h-10 w-10 rounded-xl bg-success-100 text-success-600"><CheckCircle2 className="h-5 w-5" /></div>
                 <div className="flex-1 min-w-0">
@@ -496,6 +624,8 @@ export function StudentQuizzes() {
                   <p className="text-xs text-neutral-500">{quiz.course} · {quiz.questions} questions · {quiz.dueDate}</p>
                 </div>
                 <Badge tone={quiz.score! >= 80 ? 'success' : 'warning'}>{quiz.score}%</Badge>
+                <Button variant="outline" size="sm" icon={BarChart3} onClick={() => reviewQuiz(quiz)}>Review</Button>
+                <Button variant="outline" size="sm" icon={BarChart3} onClick={() => setView('results')}>Review</Button>
               </div>
             ))}
           </div>
@@ -697,8 +827,29 @@ export function StudentNotifications() {
   }, []);
 
   const unread = items.filter(n => !n.read).length;
-  const markRead = (id: string) => setItems(items.map(n => n.id === id ? { ...n, read: true } : n));
-  const markAll = () => setItems(items.map(n => ({ ...n, read: true })));
+  const markRead = async (id: string) => {
+    const item = items.find(n => n.id === id);
+    if (!item || item.read) return;
+    const updated = { ...item, read: true };
+    if (await updateNotification(updated)) {
+      setItems(current => current.map(n => n.id === id ? updated : n));
+    }
+  };
+  const markUnread = async (id: string) => {
+    const item = items.find(n => n.id === id);
+    if (!item || !item.read) return;
+    const updated = { ...item, read: false };
+    if (await updateNotification(updated)) {
+      setItems(current => current.map(n => n.id === id ? updated : n));
+    }
+  };
+  const markAll = async () => {
+    const updated = await Promise.all(items.filter(n => !n.read).map(n => updateNotification({ ...n, read: true })));
+    if (updated.every(Boolean)) setItems(current => current.map(n => ({ ...n, read: true })));
+  };
+  const removeNotification = async (id: string) => {
+    if (await deleteNotification(id)) setItems(current => current.filter(n => n.id !== id));
+  };
 
   return (
     <div className="space-y-6">
@@ -712,8 +863,8 @@ export function StudentNotifications() {
         {items.map(n => {
           const Icon = typeIcon[n.type as keyof typeof typeIcon];
           return (
-            <Card key={n.id} hover className={cn('p-5 cursor-pointer border transition-all', !n.read ? 'border-primary-200 bg-primary-50/30 shadow-sm' : 'border-neutral-200 shadow-sm hover:shadow-md')} >
-              <div className="flex items-start gap-4" onClick={() => markRead(n.id)}>
+            <Card key={n.id} hover className={cn('p-5 border transition-all', !n.read ? 'border-primary-200 bg-primary-50/30 shadow-sm' : 'border-neutral-200 shadow-sm hover:shadow-md')} >
+              <div className="flex items-start gap-4">
                 <div className={cn('grid place-items-center h-11 w-11 rounded-xl shrink-0', `bg-${typeTone[n.type as keyof typeof typeTone]}-100 text-${typeTone[n.type as keyof typeof typeTone]}-600`)}>
                   <Icon className="h-5.5 w-5.5" />
                 </div>
@@ -724,6 +875,23 @@ export function StudentNotifications() {
                   </div>
                   <p className="text-sm text-neutral-600 mt-1 leading-relaxed">{n.message}</p>
                   <p className="text-xs text-neutral-400 mt-1.5 font-medium">{n.time}</p>
+                </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => n.read ? void markUnread(n.id) : void markRead(n.id)}
+                    className="rounded-lg px-2 py-1 text-xs font-semibold text-primary-600 hover:bg-primary-100"
+                  >
+                    {n.read ? 'Mark unread' : 'Mark read'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void removeNotification(n.id)}
+                    className="rounded-lg p-2 text-neutral-400 hover:bg-error-50 hover:text-error-600"
+                    aria-label={`Delete ${n.title}`}
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
                 </div>
               </div>
             </Card>
@@ -949,4 +1117,3 @@ export function StudentProfile() {
     </div>
   );
 }
-

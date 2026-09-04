@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import {
-  Bell, Search, Menu, ChevronDown, LogOut, Settings,
+  Bell, Search, Menu, ChevronDown, LogOut, Settings, Moon, Sun,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Avatar } from '@/components/ui';
@@ -93,25 +93,15 @@ export default function DashboardShell({
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Theme toggle (☀️ / 🌙) */}
             <button
-              onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
-              aria-label="Toggle dark mode"
-              aria-pressed={theme === 'dark'}
-              title={theme === 'dark' ? 'Switch to light mode ☀️' : 'Switch to dark mode 🌙'}
-              className="relative grid place-items-center h-10 w-10 rounded-xl text-base
-                         text-neutral-500 bg-transparent border border-transparent
-                         hover:bg-neutral-100 hover:text-neutral-900 hover:border-neutral-200
-                         dark:text-neutral-400 dark:hover:bg-white/10 dark:hover:text-amber-300 dark:hover:border-white/10
-                         transition-all duration-200 active:scale-95"
+              onClick={() => setTheme(current => current === 'dark' ? 'light' : 'dark')}
+              aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              className="grid h-10 w-10 place-items-center rounded-xl text-neutral-500 transition-colors
+                         hover:bg-neutral-100 hover:text-neutral-900
+                         dark:text-neutral-400 dark:hover:bg-white/10 dark:hover:text-white"
             >
-              <span
-                className="block leading-none transition-transform duration-300"
-                style={{ transform: theme === 'dark' ? 'rotate(0deg)' : 'rotate(0deg)' }}
-                aria-hidden
-              >
-                {theme === 'dark' ? '☀️' : '🌙'}
-              </span>
+              {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
             </button>
 
             <div className="hidden md:flex items-center gap-2 h-10 px-3.5 rounded-xl

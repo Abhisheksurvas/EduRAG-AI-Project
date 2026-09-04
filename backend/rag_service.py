@@ -419,7 +419,12 @@ def _extract_text_from_image(raw: bytes) -> list[dict]:
 
 def _validate_extracted_pages(pages: list[dict]) -> None:
     extracted_chars = sum(len(str(p.get("text", "")).strip()) for p in pages)
-    if extracted_chars < 40:
+    # A document can be perfectly valid while containing only a title, a short
+    # formula, or a small excerpt.  The old 40-character cut-off made those
+    # PDFs fail at upload time even though their text was extracted correctly.
+    # Only reject files for which neither the PDF text layer nor OCR yielded
+    # any searchable content at all.
+    if extracted_chars == 0:
         raise ValueError(
             "No text could be extracted (scanned/image PDF with no OCR support?). "
             "Install an OCR engine (pip install easyocr) and re-upload, or use a "

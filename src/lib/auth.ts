@@ -111,6 +111,34 @@ export function saveAccount(account: Omit<AuthAccount, 'createdAt'>) {
   return nextAccount;
 }
 
+/** Register with the backend before presenting signup as successful. */
+export async function registerAccount(account: Omit<AuthAccount, 'createdAt'>): Promise<AuthAccount> {
+  const payload: AuthAccount = { ...account, createdAt: new Date().toISOString() };
+  const response = await fetch('http://localhost:8000/api/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.success || !data.account) {
+    throw new Error(data.error || 'Unable to create your account. Please try again.');
+  }
+
+  const registered: AuthAccount = {
+    ...payload,
+    ...data.account,
+    password: account.password,
+  };
+  const accounts = getAccounts().filter(existing =>
+    !(existing.role === registered.role && existing.email.toLowerCase() === registered.email.toLowerCase())
+  );
+  writeStoredAccounts([...accounts, registered]);
+  if (data.token && typeof window !== 'undefined') {
+    window.localStorage.setItem('edurag-auth-token', data.token);
+  }
+  return registered;
+}
+
 export function getCurrentAccount(): AuthAccount | null {
   return readStoredSession();
 }
@@ -130,4 +158,3 @@ export function resetDemoAccounts() {
   writeStoredAccounts(demoAccounts);
   clearCurrentAccount();
 }
-

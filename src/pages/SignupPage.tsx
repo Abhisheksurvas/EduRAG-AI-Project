@@ -13,7 +13,7 @@ import {
 import type { Role } from '@/types';
 import { cn } from '@/lib/utils';
 import { roleInfo, roleUser } from '@/config/nav';
-import { findAccount, saveAccount, type AuthAccount } from '@/lib/auth';
+import { findAccount, registerAccount, type AuthAccount } from '@/lib/auth';
 import { ToastContainer, type ToastData } from '@/components/ui';
 
 const signupMeta: Record<
@@ -133,7 +133,7 @@ export default function SignupPage({
     semester,
   ]);
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError('');
 
@@ -160,7 +160,7 @@ export default function SignupPage({
     }
 
     setLoading(true);
-    window.setTimeout(() => {
+    try {
       let details: Record<string, string> | undefined = undefined;
       if (isStudent) {
         details = {
@@ -174,19 +174,22 @@ export default function SignupPage({
         };
       }
 
-      const nextAccount = saveAccount({
+      const nextAccount = await registerAccount({
         role,
         name: name.trim(),
         email: email.trim(),
         password,
         details,
       });
-      setLoading(false);
       addToast('Account created successfully! Redirecting...', 'success');
       window.setTimeout(() => {
         onSignupSuccess(nextAccount);
       }, 1500);
-    }, 500);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to create your account. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (

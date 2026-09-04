@@ -86,6 +86,18 @@ export default function LoginPage({
     setError('');
     setLoading(true);
 
+    // Locally cached registrations are valid for this browser. Checking them
+    // first avoids a misleading 401 while a newly registered account is
+    // still being synced or when the backend is unavailable.
+    const savedAccount = findAccount(role, email);
+    if (savedAccount?.password === password) {
+      const loginTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+      setLoading(false);
+      addToast(`Login successful at ${loginTime}!`, 'success');
+      window.setTimeout(() => onLoginSuccess(savedAccount), 450);
+      return;
+    }
+
     try {
       const res = await fetch('http://localhost:8000/api/auth/login', {
         method: 'POST',
@@ -113,16 +125,15 @@ export default function LoginPage({
           }
       } else {
         const errData = await res.json().catch(() => ({}));
-        setError(errData.error || 'Invalid credentials for the selected role.');
-        setLoading(false);
-        return;
+        // A newly-created local/demo account may not exist in the backend yet.
+        // Continue to the local fallback before reporting a failed sign-in.
+        console.warn('[Login Backend] Verification failed, checking local storage:', errData.error);
       }
     } catch (err) {
       console.warn('[Login Backend] Could not verify with backend, checking local storage:', err);
     }
 
     // Local fallback for offline operation
-    const savedAccount = findAccount(role, email);
     if (!savedAccount || savedAccount.password !== password) {
       setError('Invalid credentials for the selected role.');
       setLoading(false);

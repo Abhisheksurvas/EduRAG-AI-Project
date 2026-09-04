@@ -328,7 +328,7 @@ export function Toast({ toast, onDismiss }: { toast: ToastData; onDismiss: (id: 
   const Icon = style.icon;
 
   useEffect(() => {
-    const t = setTimeout(() => onDismiss(toast.id), 3500);
+    const t = setTimeout(() => onDismiss(toast.id), 5000);
     return () => clearTimeout(t);
   }, [toast.id, onDismiss]);
 
@@ -357,9 +357,14 @@ export function Toast({ toast, onDismiss }: { toast: ToastData; onDismiss: (id: 
 export function ToastContainer({ toasts, onDismiss }: { toasts: ToastData[]; onDismiss: (id: string) => void }) {
   if (toasts.length === 0) return null;
   return (
-    <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2" aria-label="Notifications">
+    <div
+      className="fixed top-4 left-1/2 z-[60] flex w-[min(calc(100vw-2rem),32rem)] -translate-x-1/2 flex-col items-center gap-2 pointer-events-none"
+      aria-label="Notifications"
+    >
       {toasts.map(t => (
-        <Toast key={t.id} toast={t} onDismiss={onDismiss} />
+        <div key={t.id} className="w-full pointer-events-auto">
+          <Toast toast={t} onDismiss={onDismiss} />
+        </div>
       ))}
     </div>
   );

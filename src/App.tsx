@@ -73,8 +73,7 @@ function routeFromLocation(): AppRoute {
 
   const dashboardMatch = pathname.match(/^\/student-dashboard(?:\/([^/]+))?$/);
   if (dashboardMatch) {
-    const role = dashboardMatch[1] as Role;
-    const page = dashboardMatch[2] ?? 'dashboard';
+    const page = dashboardMatch[1] ?? 'dashboard';
     if (session?.role === 'student') {
       return { view: 'dashboard', role: 'student', page, loginRole: 'student' };
     }

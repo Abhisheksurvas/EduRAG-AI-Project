@@ -4,6 +4,8 @@ import { Card, CardHeader, CardBody } from '@/components/ui';
 import { fetchDocuments } from '@/lib/dataService';
 import { useMaterials } from '@/lib/materialsStore';
 
+const MATERIAL_FILE_URL = 'http://localhost:8000/api/materials/download';
+
 export default function MyLibrary() {
   const [docs, setDocs] = useState([]);
   const [apiDocs, setApiDocs] = useState([]);
@@ -37,7 +39,14 @@ export default function MyLibrary() {
     title: d.name,
     author: d.uploadedBy || 'Unknown',
     file: (d.type || 'pdf').toUpperCase(),
+    hasFile: Boolean(d.id),
   }));
+
+  const openMaterial = (id, inline) => {
+    if (!id) return;
+    const query = inline ? '?inline=1' : '';
+    window.open(`${MATERIAL_FILE_URL}/${encodeURIComponent(id)}${query}`, '_blank', 'noopener,noreferrer');
+  };
 
   return (
     <div className="space-y-6">
@@ -56,10 +65,21 @@ export default function MyLibrary() {
                 <span className="text-primary-700">{book.file}</span>
               </div>
               <div className="flex gap-2">
-                <button className="flex-1 flex items-center justify-center gap-1 py-1.5 px-3 text-sm font-semibold border border-neutral-200 rounded-lg hover:bg-neutral-50 transition-all text-neutral-700">
+                <button
+                  type="button"
+                  onClick={() => openMaterial(book.id, true)}
+                  disabled={!book.hasFile}
+                  className="flex-1 flex items-center justify-center gap-1 py-1.5 px-3 text-sm font-semibold border border-neutral-200 rounded-lg hover:bg-neutral-50 transition-all text-neutral-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
                   <Eye className="h-4 w-4" /> Preview
                 </button>
-                <button className="flex items-center justify-center p-1.5 border border-neutral-200 rounded-lg hover:bg-neutral-50 transition-all text-primary-600">
+                <button
+                  type="button"
+                  onClick={() => openMaterial(book.id, false)}
+                  disabled={!book.hasFile}
+                  title="Download file"
+                  className="flex items-center justify-center p-1.5 border border-neutral-200 rounded-lg hover:bg-neutral-50 transition-all text-primary-600 disabled:cursor-not-allowed disabled:opacity-50"
+                >
                   <Download className="h-4.5 w-4.5" />
                 </button>
               </div>

@@ -807,11 +807,11 @@ class EduRAGHandler(BaseHTTPRequestHandler):
             self._write_json(filtered)
             return
 
-        # ---- material download ----
+        # ---- material preview/download ----
         if path.startswith("/api/materials/download"):
-            payload = self._require_auth()
-            if payload is None:
-                return
+            # Demo/local sessions do not always have a JWT. Material visibility is
+            # already filtered by the materials endpoint, so allow those sessions
+            # to open the stored file as well.
             material_id = path.split("/")[-1]
             material = load_one("materials", {}, {"id": material_id})
             if not material:
@@ -839,7 +839,8 @@ class EduRAGHandler(BaseHTTPRequestHandler):
                     content_type = "text/csv"
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", content_type)
-                self.send_header("Content-Disposition", f'attachment; filename="{material.get("name", "download")}"')
+                disposition = "inline" if query_params.get("inline", ["0"])[0] == "1" else "attachment"
+                self.send_header("Content-Disposition", f'{disposition}; filename="{material.get("name", "download")}"')
                 self.send_header("Content-Length", str(len(file_data)))
                 self.end_headers()
                 try:
@@ -858,6 +859,14 @@ class EduRAGHandler(BaseHTTPRequestHandler):
                 return
             quizzes = load_many("quizzes", [])
             self._write_json(quizzes)
+            return
+
+        # ---- notes ----
+        if path == "/api/notes":
+            payload = self._require_auth()
+            if payload is None:
+                return
+            self._write_json(load_many("notes", []))
             return
 
         # ---- stats ----
@@ -883,7 +892,13 @@ class EduRAGHandler(BaseHTTPRequestHandler):
             payload = self._require_auth()
             if payload is None:
                 return
-            self._write_json(load_many("notifications", []))
+            user_id = payload.get("sub", "")
+            notifications = load_many("notifications", [])
+            visible = [
+                item for item in notifications
+                if item.get("userId") in (None, "", "all", user_id)
+            ]
+            self._write_json(visible)
             return
 
         # ---- announcements ----
@@ -1415,6 +1430,10 @@ class EduRAGHandler(BaseHTTPRequestHandler):
             "/api/courses": "courses",
             "/api/students": "students",
             "/api/quizzes": "quizzes",
+            "/api/quiz-questions": "quiz_questions",
+            "/api/quiz-results": "quiz_results",
+            "/api/notes": "notes",
+            "/api/notifications": "notifications",
             "/api/materials": "materials",
             "/api/profile": "profiles",
             "/api/stats": "stats",
@@ -1430,9 +1449,11 @@ class EduRAGHandler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------
 
     def _handle_login(self, body: dict) -> None:
-        email = body.get("email", "").strip().lower()
+        email = str(body.get("email", "")).strip().lower()
         password = body.get("password", "")
-        role = body.get("role", "")
+        # The UI sends role values selected from labels.  Normalize both sides
+        # so legacy records such as "Student" continue to work with "student".
+        role = str(body.get("role", "")).strip().lower()
 
         if not email or not password or not role:
             self._write_json(
@@ -1442,15 +1463,28 @@ class EduRAGHandler(BaseHTTPRequestHandler):
             return
 
         user = None
+        is_legacy_account = False
         if mongo_db is not None:
             try:
-                user = mongo_db["users"].find_one({"email": email, "role": role})
+                # Older deployments persisted registrations in `accounts`, while
+                # the login endpoint only searched `users`.  Look up both stores
+                # and compare normalized roles to avoid rejecting valid accounts.
+                user = mongo_db["users"].find_one({"email": email})
+                if user and str(user.get("role", "")).strip().lower() != role:
+                    user = None
+
+                if user is None:
+                    legacy_account = mongo_db["accounts"].find_one({"email": email})
+                    if legacy_account and str(legacy_account.get("role", "")).strip().lower() == role:
+                        user = legacy_account
+                        is_legacy_account = True
             except Exception as exc:
                 print(f"[MongoDB] Login lookup failed: {exc}")
         else:
             user = next(
                 (a for a in memory_store.get("accounts", [])
-                 if a.get("email", "").lower() == email and a.get("role") == role),
+                 if a.get("email", "").lower() == email
+                 and str(a.get("role", "")).strip().lower() == role),
                 None,
             )
 
@@ -1462,6 +1496,25 @@ class EduRAGHandler(BaseHTTPRequestHandler):
         if user.get("password") not in (hashed_input, password):
             self._write_json({"error": "Invalid credentials for the selected role."}, status_code=HTTPStatus.UNAUTHORIZED)
             return
+
+        # Repair legacy account-only records after a successful login.  This
+        # keeps future logins on the canonical `users` collection and stores a
+        # hash instead of retaining a plaintext legacy password.
+        if mongo_db is not None and is_legacy_account:
+            try:
+                mongo_db["users"].update_one(
+                    {"email": email},
+                    {"$setOnInsert": {
+                        "email": email,
+                        "name": user.get("name", ""),
+                        "role": role,
+                        "password": hashed_input,
+                    }},
+                    upsert=True,
+                )
+                user = mongo_db["users"].find_one({"email": email}) or user
+            except Exception as exc:
+                print(f"[MongoDB] Legacy user migration failed: {exc}")
 
         # Build token with optional branch/year claims for students
         user_id = user.get("userId") or str(user.get("_id", ""))
@@ -1539,6 +1592,24 @@ class EduRAGHandler(BaseHTTPRequestHandler):
 
             # Sync the new account's profile (inserts into users + students collections)
         sync_profile_for_account(body)
+
+        # In fallback mode there is no MongoDB users collection for login to
+        # query, so retain the registration in the in-memory account store too.
+        if mongo_db is None:
+            existing_index = next(
+                (
+                    index for index, account in enumerate(memory_store["accounts"])
+                    if account.get("email", "").strip().lower() == email
+                    and account.get("role") == role
+                ),
+                None,
+            )
+            account_record = dict(body)
+            account_record["email"] = email
+            if existing_index is None:
+                memory_store["accounts"].append(account_record)
+            else:
+                memory_store["accounts"][existing_index] = account_record
 
         # Retrieve the user back so we have the userId
         user_id = None
@@ -1626,6 +1697,9 @@ class EduRAGHandler(BaseHTTPRequestHandler):
         selected_material_ids = body.get("selectedMaterialIds", [])
         if not isinstance(selected_material_ids, list):
             selected_material_ids = []
+        response_mode = str(body.get("responseMode", "materials") or "materials").strip().lower()
+        if response_mode not in {"materials", "ai", "both"}:
+            response_mode = "materials"
 
         material_name_map = {}
         try:
@@ -1650,7 +1724,7 @@ class EduRAGHandler(BaseHTTPRequestHandler):
         retrieved = retrieve(question, all_chunks, selected_material_ids)
         # Build a context string for the LLM from retrieved chunk text
         rag_context = ""
-        if retrieved:
+        if response_mode in {"materials", "both"} and retrieved:
             chunk_lines = []
             for item in retrieved[:8]:
                 doc = item.get("documentName", "document")
@@ -1659,12 +1733,14 @@ class EduRAGHandler(BaseHTTPRequestHandler):
                 chunk_lines.append(f"[Document: {doc}, page {page}]\n{text}")
             rag_context = "\n\n---\n\n".join(chunk_lines)
 
+        material_answer = ""
         if retrieved:
-            answer = extractive_answer(question, retrieved)
+            material_answer = extractive_answer(question, retrieved)
             # Only surface Source References when the answer is actually grounded in
             # the retrieved material — not when it falls back to "couldn't find".
-            grounded = answer.startswith("Based on your study materials")
-            if grounded:
+            grounded = material_answer.startswith("Based on your study materials")
+            if grounded and response_mode == "materials":
+                answer = material_answer
                 sources = [
                     {"doc": item["documentName"], "page": item["page"]}
                     for item in retrieved
@@ -1682,8 +1758,18 @@ class EduRAGHandler(BaseHTTPRequestHandler):
                 })
                 return
 
-        # RAG did not produce a grounded answer → use the LLM for general-knowledge
-        # answers, or a proper service-error message if the LLM is unavailable.
+        if response_mode == "materials":
+            self._write_json({
+                "success": True,
+                "answer": material_answer or "I couldn't find this information in your uploaded study materials. Please rephrase the question or upload a more relevant document.",
+                "sources": [],
+                "attachments": attachments,
+                "source_type": "document",
+            })
+            return
+
+        # For the combined mode, return both the grounded material answer and
+        # the broader AI explanation in one response.
         if study_buddy is None:
             self._write_json(
                 {"error": "AI service is not available. Please try again in a few moments."},
@@ -1727,13 +1813,22 @@ class EduRAGHandler(BaseHTTPRequestHandler):
                 context=llm_context,
                 history=history_messages,
             )
-            self._write_json({
+            response = {
                 "success": True,
                 "answer": answer,
                 "sources": [],
                 "attachments": attachments,
                 "source_type": "general",
-            })
+            }
+            if response_mode == "both":
+                response["material_answer"] = material_answer
+                response["ai_answer"] = answer
+                response["sources"] = [
+                    {"doc": item["documentName"], "page": item["page"]}
+                    for item in retrieved
+                ] if material_answer.startswith("Based on your study materials") else []
+                response["source_type"] = "document" if response["sources"] else "general"
+            self._write_json(response)
         except Exception as exc:
             print(f"[AI] Chat request failed: {exc}")
             self._write_json(

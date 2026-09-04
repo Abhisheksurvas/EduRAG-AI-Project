@@ -495,6 +495,151 @@
   color: var(--color-neutral-700);
 }
 
+.aisa-answer-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+}
+.aisa-answer-section + .aisa-answer-section {
+  padding-top: 0.875rem;
+  border-top: 1px solid var(--color-neutral-200);
+}
+.dark .aisa-answer-section + .aisa-answer-section {
+  border-top-color: var(--color-neutral-300);
+}
+.aisa-answer-section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0 0 0.5rem;
+  color: var(--color-neutral-700);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+.dark .aisa-answer-section-title { color: var(--color-neutral-800); }
+.aisa-answer-section-icon {
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 0.5rem;
+}
+.aisa-answer-section-icon--materials {
+  background: var(--color-primary-100);
+  color: var(--color-primary-700);
+}
+.aisa-answer-section-icon--ai {
+  background: var(--color-accent-100);
+  color: var(--color-accent-700);
+}
+.aisa-answer-line,
+.aisa-answer-muted {
+  margin: 0 0 0.35rem;
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+.aisa-answer-muted {
+  color: var(--color-neutral-500);
+  font-size: 0.75rem;
+}
+.aisa-answer-heading {
+  margin: 0.65rem 0 0.35rem;
+  color: var(--color-neutral-800);
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+.dark .aisa-answer-heading { color: var(--color-neutral-900); }
+.aisa-answer-bullet {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  margin: 0 0 0.4rem;
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+.aisa-answer-bullet-dot {
+  width: 0.35rem;
+  height: 0.35rem;
+  margin-top: 0.55rem;
+  border-radius: 999px;
+  flex-shrink: 0;
+  background: var(--color-primary-500);
+}
+.aisa-message-sources {
+  margin-top: 0.875rem;
+  padding-top: 0.875rem;
+  border-top: 1px solid var(--color-neutral-200);
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.dark .aisa-message-sources { border-top-color: var(--color-neutral-300); }
+.aisa-source-card {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  width: 100%;
+  padding: 0.625rem 0.7rem;
+  text-align: left;
+  border: 1px solid var(--color-neutral-200);
+  border-radius: 0.75rem;
+  background: #fff;
+  color: var(--color-neutral-800);
+  cursor: pointer;
+  transition: transform 0.2s ease, border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
+}
+.aisa-source-card:hover {
+  transform: translateY(-1px);
+  border-color: var(--color-primary-300);
+  background: var(--color-primary-50);
+  box-shadow: 0 6px 16px -12px rgba(37, 99, 235, 0.65);
+}
+.dark .aisa-source-card {
+  border-color: var(--color-neutral-300);
+  background: var(--color-neutral-100);
+  color: var(--color-neutral-900);
+}
+.dark .aisa-source-card:hover {
+  border-color: rgba(59, 130, 246, 0.55);
+  background: rgba(59, 130, 246, 0.12);
+}
+.aisa-source-card-icon {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  flex-shrink: 0;
+  border-radius: 0.625rem;
+  border-width: 1px;
+  border-style: solid;
+  font-size: 0.55rem;
+  font-weight: 800;
+}
+.aisa-source-card-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+.aisa-source-card-page {
+  margin-top: 0.15rem;
+  color: var(--color-neutral-500);
+  font-size: 0.65rem;
+  font-weight: 600;
+}
+.aisa-source-card-arrow {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--color-neutral-400);
+  transition: transform 0.2s ease, color 0.2s ease;
+}
+.aisa-source-card:hover .aisa-source-card-arrow {
+  color: var(--color-primary-600);
+  transform: translateX(2px);
+}
+
 /* Typing / thinking dots */
 .aisa-typing {
   display: flex;
@@ -565,7 +710,7 @@
 
 /* Composer */
 .aisa-composer-wrap {
-  padding: 0.875rem 1.25rem 1rem;
+  padding: 0.875rem clamp(0.75rem, 3vw, 1.5rem) 1rem;
   border-top: 1px solid var(--color-neutral-200);
   background-color: #fff;
 }
@@ -577,20 +722,23 @@
 .aisa-composer {
   display: flex;
   align-items: flex-end;
-  gap: 0.5rem;
-  background-color: var(--color-neutral-100);
-  border: 1px solid var(--color-neutral-200);
-  border-radius: 1rem;
-  padding: 0.5rem;
-  transition: all 0.2s ease;
+  gap: 0.625rem;
+  background-color: var(--color-neutral-50);
+  border: 1px solid var(--color-neutral-300);
+  border-radius: 1.25rem;
+  padding: 0.5rem 0.625rem 0.5rem 0.75rem;
+  box-shadow: 0 8px 24px -18px rgba(15, 23, 42, 0.55);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 .aisa-composer:focus-within {
   border-color: var(--color-primary-400);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.16);
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.12), 0 12px 30px -18px rgba(37, 99, 235, 0.55);
+  transform: translateY(-1px);
 }
 .dark .aisa-composer {
   background-color: var(--color-neutral-200);
   border-color: var(--color-neutral-300);
+  box-shadow: 0 8px 24px -18px rgba(0, 0, 0, 0.7);
 }
 .dark .aisa-composer:focus-within {
   border-color: var(--color-primary-400);
@@ -613,6 +761,10 @@
 .aisa-composer-tool-btn:hover {
   background-color: var(--color-neutral-200);
   color: var(--color-primary-600);
+  transform: translateY(-1px);
+}
+.aisa-composer-tool-btn:active {
+  transform: scale(0.92);
 }
 .dark .aisa-composer-tool-btn { color: var(--color-neutral-500); }
 .dark .aisa-composer-tool-btn:hover {
@@ -654,7 +806,7 @@
 }
 .aisa-composer-send:hover:not(:disabled) {
   background-color: var(--color-primary-700);
-  transform: translateY(-1px);
+  transform: translateY(-1px) scale(1.03);
 }
 .aisa-composer-send:disabled {
   opacity: 0.45;
@@ -664,41 +816,274 @@
 .dark .aisa-composer-send { background-color: var(--color-primary-600); }
 .dark .aisa-composer-send:hover:not(:disabled) { background-color: var(--color-primary-700); }
 
-/* Attachment chips above composer */
-.aisa-attachments {
+/* Attachment previews above composer */
+.aisa-attachment-preview {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0.625rem;
+}
+.aisa-attachment-label {
+  margin: 0 0 0.4rem 0.15rem;
+  color: var(--color-neutral-500);
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.aisa-attachment-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.375rem;
-  margin-bottom: 0.5rem;
+  gap: 0.5rem;
 }
-.aisa-attachment-chip {
+.aisa-attachment-card {
   display: inline-flex;
   align-items: center;
-  gap: 0.375rem;
-  font-size: 0.75rem;
-  padding: 0.375rem 0.625rem;
-  border-radius: 0.5rem;
-  background-color: var(--color-primary-50);
-  color: var(--color-primary-700);
-  border: 1px solid var(--color-primary-200);
-  font-weight: 500;
+  gap: 0.5rem;
+  min-width: 0;
+  max-width: min(100%, 18rem);
+  padding: 0.45rem 0.5rem 0.45rem 0.45rem;
+  border-radius: 0.875rem;
+  background-color: #fff;
+  color: var(--color-neutral-800);
+  border: 1px solid var(--color-neutral-200);
+  box-shadow: 0 4px 14px -12px rgba(15, 23, 42, 0.7);
+  animation: attachmentIn 0.2s ease-out both;
 }
-.dark .aisa-attachment-chip {
-  background-color: rgba(59, 130, 246, 0.18);
-  color: var(--color-primary-300);
-  border-color: rgba(59, 130, 246, 0.4);
+.dark .aisa-attachment-card {
+  background-color: var(--color-neutral-200);
+  color: var(--color-neutral-900);
+  border-color: var(--color-neutral-300);
 }
-.aisa-attachment-chip button {
+.aisa-attachment-icon {
   display: grid;
   place-items: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  flex-shrink: 0;
+  border-radius: 0.625rem;
+  font-size: 0.55rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  border-width: 1px;
+  border-style: solid;
+}
+.aisa-attachment-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 0.1rem;
+}
+.aisa-attachment-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.aisa-attachment-size {
+  color: var(--color-neutral-500);
+  font-size: 0.625rem;
+}
+.aisa-attachment-remove {
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  flex-shrink: 0;
+  border-radius: 0.5rem;
   background: transparent;
   border: none;
   cursor: pointer;
-  color: inherit;
-  opacity: 0.7;
-  transition: opacity 0.2s ease;
+  color: var(--color-neutral-400);
+  transition: color 0.2s ease, background-color 0.2s ease, transform 0.2s ease;
 }
-.aisa-attachment-chip button:hover { opacity: 1; }
+.aisa-attachment-remove:hover {
+  color: var(--color-error-600);
+  background-color: var(--color-error-50);
+  transform: scale(1.05);
+}
+.aisa-message-file-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: 100%;
+  padding: 0.4rem 0.45rem 0.4rem 0.625rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--color-neutral-200);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.aisa-message-file-card > span:nth-child(2) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aisa-message-file-remove {
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  margin-left: 0.125rem;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--color-neutral-500);
+  cursor: pointer;
+  transition: color 0.2s ease, background-color 0.2s ease, transform 0.2s ease;
+}
+.aisa-message-file-remove:hover {
+  color: var(--color-error-600);
+  background-color: var(--color-error-50);
+  transform: scale(1.06);
+}
+.aisa-message-file-remove--user {
+  color: rgba(255, 255, 255, 0.75);
+}
+.aisa-message-file-remove--user:hover {
+  color: #fff;
+  background-color: rgba(255, 255, 255, 0.16);
+}
+.aisa-chat-upload-preview {
+  width: min(100%, 42rem);
+  margin: 0 auto 0.25rem;
+  padding: 0.75rem;
+  border: 1px solid var(--color-neutral-200);
+  border-radius: 1rem;
+  background: var(--color-neutral-50);
+  animation: attachmentIn 0.25s ease-out both;
+}
+.dark .aisa-chat-upload-preview {
+  border-color: var(--color-neutral-300);
+  background: var(--color-neutral-200);
+}
+.aisa-chat-upload-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+  color: var(--color-neutral-500);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.aisa-chat-upload-preview-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.aisa-chat-upload-card {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: min(100%, 16rem);
+  max-width: 100%;
+  flex: 1 1 16rem;
+  padding: 0.5rem 0.5rem 0.5rem 0.55rem;
+  border: 1px solid var(--color-neutral-200);
+  border-radius: 0.75rem;
+  background: #fff;
+}
+.dark .aisa-chat-upload-card {
+  border-color: var(--color-neutral-300);
+  background: var(--color-neutral-100);
+}
+.aisa-chat-upload-icon {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  flex-shrink: 0;
+  border-width: 1px;
+  border-style: solid;
+  border-radius: 0.6rem;
+  font-size: 0.55rem;
+  font-weight: 800;
+}
+.aisa-chat-upload-name {
+  overflow: hidden;
+  margin: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-neutral-800);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+.dark .aisa-chat-upload-name { color: var(--color-neutral-900); }
+.aisa-chat-upload-status {
+  margin: 0.15rem 0 0;
+  color: var(--color-neutral-500);
+  font-size: 0.625rem;
+}
+.aisa-chat-upload-remove {
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--color-neutral-400);
+  cursor: pointer;
+  transition: color 0.2s ease, background-color 0.2s ease, transform 0.2s ease;
+}
+.aisa-chat-upload-remove:hover {
+  color: var(--color-error-600);
+  background: var(--color-error-50);
+  transform: scale(1.06);
+}
+.aisa-composer-hint {
+  margin: 0.45rem 0 0;
+  color: var(--color-neutral-400);
+  font-size: 0.625rem;
+  text-align: center;
+}
+
+.aisa-answer-mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin-top: 0.625rem;
+}
+.aisa-answer-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2rem;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--color-neutral-200);
+  border-radius: 999px;
+  background: var(--color-neutral-50);
+  color: var(--color-neutral-500);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.2s ease, background-color 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+}
+.aisa-answer-mode-btn:hover {
+  color: var(--color-primary-600);
+  border-color: var(--color-primary-200);
+  transform: translateY(-1px);
+}
+.aisa-answer-mode-btn--active {
+  color: var(--color-primary-700);
+  background: var(--color-primary-50);
+  border-color: var(--color-primary-300);
+  box-shadow: 0 4px 12px -8px rgba(37, 99, 235, 0.6);
+}
+.dark .aisa-answer-mode-btn {
+  background: var(--color-neutral-200);
+  border-color: var(--color-neutral-300);
+  color: var(--color-neutral-500);
+}
+.dark .aisa-answer-mode-btn--active {
+  color: var(--color-primary-300);
+  background: rgba(59, 130, 246, 0.16);
+  border-color: rgba(59, 130, 246, 0.45);
+}
 
 /* Hidden file input */
 .aisa-file-input {
@@ -707,6 +1092,14 @@
   height: 1px;
   opacity: 0;
   pointer-events: none;
+}
+
+@media (max-width: 640px) {
+  .aisa-composer-wrap { padding-bottom: 0.75rem; }
+  .aisa-composer { border-radius: 1rem; gap: 0.375rem; }
+  .aisa-composer-hint { display: none; }
+  .aisa-answer-mode-btn { flex: 1; justify-content: center; }
+  .aisa-attachment-card { max-width: 100%; flex: 1 1 100%; }
 }
 
 /* Responsive: collapse history to a slide-in panel on mobile */
@@ -735,6 +1128,11 @@
 @keyframes pulseSoft {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.55; transform: scale(0.9); }
+}
+
+@keyframes attachmentIn {
+  from { opacity: 0; transform: translateY(3px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 /* ===== Navbar polish (DashboardShell) ===== */

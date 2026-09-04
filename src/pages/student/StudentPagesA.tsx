@@ -20,7 +20,8 @@ import {
   Bot as BotIcon,
   RefreshCw,
   MessageSquare,
-  Quote,
+  Copy,
+  Edit3,
   BookMarked,
   ArrowRight,
   CheckCircle2,
@@ -75,6 +76,13 @@ import {
   type ChatMessage,
   getStudentProfile,
 } from '@/data/mockData';
+import {
+  fetchNotes,
+  createNote,
+  updateNote,
+  deleteNote,
+  sendChatMessage,
+} from '@/lib/dataService';
 
 /* =========================================================
    TYPES / HELPERS
@@ -347,7 +355,7 @@ export function StudentDashboard() {
                     className={cn(
                       'grid place-items-center h-10 w-10 rounded-xl shrink-0',
                       courseColorStyles[course.color] ??
-                        'bg-neutral-100 text-neutral-600'
+                      'bg-neutral-100 text-neutral-600'
                     )}
                   >
                     <Icon className="h-5 w-5" />
@@ -416,11 +424,11 @@ export function StudentDashboard() {
                     className={cn(
                       'grid place-items-center h-10 w-10 rounded-xl transition-transform group-hover:scale-110',
                       action.tone === 'primary' &&
-                        'bg-primary-100 text-primary-600',
+                      'bg-primary-100 text-primary-600',
                       action.tone === 'accent' &&
-                        'bg-accent-100 text-accent-600',
+                      'bg-accent-100 text-accent-600',
                       action.tone === 'success' &&
-                        'bg-success-100 text-success-600'
+                      'bg-success-100 text-success-600'
                     )}
                   >
                     <Icon className="h-5 w-5" />
@@ -563,7 +571,7 @@ export function StudentCourses() {
           className={cn(
             'relative overflow-hidden rounded-3xl p-8 text-white bg-gradient-to-br',
             courseGradientStyles[course.color] ??
-              'from-primary-600 to-primary-800'
+            'from-primary-600 to-primary-800'
           )}
         >
           <div className="relative flex items-start justify-between gap-4">
@@ -771,7 +779,7 @@ export function StudentCourses() {
                     className={cn(
                       'h-2 bg-gradient-to-r',
                       courseLineGradientStyles[
-                        course.color
+                      course.color
                       ] ?? 'from-primary-400 to-primary-600'
                     )}
                   />
@@ -782,9 +790,9 @@ export function StudentCourses() {
                         className={cn(
                           'grid place-items-center h-12 w-12 rounded-xl',
                           courseColorStyles[
-                            course.color
+                          course.color
                           ] ??
-                            'bg-neutral-100 text-neutral-600'
+                          'bg-neutral-100 text-neutral-600'
                         )}
                       >
                         <Icon className="h-6 w-6" />
@@ -797,8 +805,8 @@ export function StudentCourses() {
                               ? 'primary'
                               : course.category ===
                                 'Elective'
-                              ? 'secondary'
-                              : 'accent'
+                                ? 'secondary'
+                                : 'accent'
                           }
                         >
                           {course.category}
@@ -1066,16 +1074,15 @@ export function StudentLibrary() {
 const ACCEPTED_EXT = ['pdf', 'pptx', 'docx', 'txt', 'md', 'csv'];
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 const MAX_FILES = 5;
+const MATERIAL_FILE_URL = 'http://localhost:8000/api/materials/download';
 
 type UploadedFile = {
   id: string;
   name: string;
   size: number;
   type: string;
-  /** Plain-text content extracted from the file (best-effort). */
-  text: string;
-  /** Total page count (best-effort estimate). */
   pages: number;
+  status: 'indexing' | 'ready';
 };
 
 function getExt(name: string): string {
@@ -1087,6 +1094,11 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function openMaterialFile(id: string, inline = true): void {
+  const query = inline ? '?inline=1' : '';
+  window.open(`${MATERIAL_FILE_URL}/${encodeURIComponent(id)}${query}`, '_blank', 'noopener,noreferrer');
 }
 
 function fileIconFor(name: string): 'pdf' | 'ppt' | 'doc' | 'text' {
@@ -1104,76 +1116,45 @@ const fileBadgeClass: Record<'pdf' | 'ppt' | 'doc' | 'text', string> = {
   text: 'bg-success-100 text-success-700 dark:bg-success-900/40 dark:text-success-300 border-success-200 dark:border-success-800',
 };
 
-/**
- * Best-effort plain-text extraction. Works natively for text-like files.
- * For PDF / DOCX / PPTX we read a small slice of the binary and pull any
- * printable ASCII runs out so the assistant still has *something* to quote.
- */
-async function readFileText(file: File): Promise<{ text: string; pages: number }> {
-  const ext = getExt(file.name);
-
-  if (ext === 'txt' || ext === 'md' || ext === 'csv') {
-    const text = await file.text();
-    return { text, pages: Math.max(1, Math.round(text.length / 1800)) };
-  }
-
-  // Best-effort for binary formats: read first 256 KB, extract printable runs.
-  const slice = file.slice(0, Math.min(file.size, 256 * 1024));
-  const buffer = await slice.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
-  let ascii = '';
-  for (let i = 0; i < bytes.length; i++) {
-    const b = bytes[i];
-    const c = b >= 32 && b < 127 ? String.fromCharCode(b) : ' ';
-    ascii += c;
-  }
-  const cleaned = ascii
-    .replace(/[ \t]{2,}/g, ' ')
-    .replace(/\s{3,}/g, '\n')
-    .split('\n')
-    .map(l => l.trim())
-    .filter(l => l.length > 24)
-    .join('\n')
-    .slice(0, 4000);
-
-  const pages = Math.max(1, Math.round(file.size / 60000));
-  return {
-    text: cleaned || `${file.name} (${formatBytes(file.size)}) â€” uploaded for context.`,
-    pages,
-  };
-}
-
-/** Find a relevant snippet of `text` that best matches `query`. */
-function pickExcerpt(text: string, query: string): string {
-  if (!text) return '';
-  const q = (query || '').toLowerCase().trim();
-  if (!q) {
-    return text.slice(0, 220) + (text.length > 220 ? 'â€¦' : '');
-  }
-  const terms = q.split(/\s+/).filter(t => t.length > 2);
-  if (terms.length === 0) return text.slice(0, 220) + (text.length > 220 ? 'â€¦' : '');
-
-  const lower = text.toLowerCase();
-  let bestIdx = -1;
-  let bestScore = 0;
-  for (const t of terms) {
-    const idx = lower.indexOf(t);
-    if (idx !== -1 && idx > bestScore) {
-      bestScore = idx;
-      bestIdx = idx;
+function renderHighlightedText(text: string) {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return (
+        <strong key={`${part}-${index}`} className="font-semibold text-primary-700 dark:text-primary-300">
+          {part.slice(2, -2)}
+        </strong>
+      );
     }
-  }
-  if (bestIdx === -1) return text.slice(0, 220) + (text.length > 220 ? 'â€¦' : '');
-
-  const start = Math.max(0, bestIdx - 80);
-  const end = Math.min(text.length, bestIdx + 240);
-  return (start > 0 ? 'â€¦' : '') + text.slice(start, end) + (end < text.length ? 'â€¦' : '');
+    return <span key={`${part}-${index}`}>{part}</span>;
+  });
 }
 
-/** Estimate a page number for an excerpt within `text`. */
-function estimatePage(text: string, excerptStart: number, totalPages: number): number {
-  const ratio = Math.min(1, Math.max(0, excerptStart / Math.max(1, text.length)));
-  return Math.max(1, Math.min(totalPages, Math.round(ratio * totalPages) + 1));
+function renderAnswerContent(content: string) {
+  return content.split(/\r?\n/).map((line, index) => {
+    const trimmed = line.trim();
+    if (!trimmed) return <div key={`space-${index}`} className="h-2" />;
+
+    const bullet = trimmed.match(/^[-*•]\s+(.*)$/);
+    if (bullet) {
+      return (
+        <div key={`bullet-${index}`} className="aisa-answer-bullet">
+          <span className="aisa-answer-bullet-dot" aria-hidden="true" />
+          <span>{renderHighlightedText(bullet[1])}</span>
+        </div>
+      );
+    }
+
+    const heading = trimmed.match(/^#{1,3}\s+(.*)$/);
+    if (heading) {
+      return (
+        <h4 key={`heading-${index}`} className="aisa-answer-heading">
+          {renderHighlightedText(heading[1])}
+        </h4>
+      );
+    }
+
+    return <p key={`line-${index}`} className="aisa-answer-line">{renderHighlightedText(trimmed)}</p>;
+  });
 }
 
 export function StudentAIAssistant() {
@@ -1183,6 +1164,8 @@ export function StudentAIAssistant() {
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editingMessageText, setEditingMessageText] = useState('');
   const [isThinking, setIsThinking] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [loadingConversations, setLoadingConversations] = useState(true);
@@ -1191,6 +1174,7 @@ export function StudentAIAssistant() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editTextareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const pushToast = useCallback((message: string, tone: ToastData['tone']) => {
@@ -1229,68 +1213,6 @@ export function StudentAIAssistant() {
     el.style.height = `${Math.min(el.scrollHeight, 128)}px`;
   }, [input]);
 
-  /**
-   * Generate an AI answer grounded in the user's uploaded documents.
-   * Uses dynamic retrieval: for each uploaded file, find the most relevant
-   * excerpt and produce a `Source` entry with the correct page number.
-   */
-  const generateGroundedAnswer = useCallback(
-    (query: string, files: UploadedFile[]): { content: string; sources: NonNullable<ChatMessage['sources']> } => {
-      const sources: NonNullable<ChatMessage['sources']> = [];
-
-      if (files.length === 0) {
-        return {
-          content:
-            "I don't see any uploaded documents yet. Use the ðŸ“Ž paperclip in the composer to upload a PDF, DOCX, PPTX, TXT, MD, or CSV file and I'll answer directly from its content.",
-          sources: [],
-        };
-      }
-
-      const matchPerFile: { file: UploadedFile; excerpt: string; page: number; score: number }[] = [];
-
-      for (const f of files) {
-        const excerpt = pickExcerpt(f.text, query);
-        const lower = f.text.toLowerCase();
-        const terms = query.toLowerCase().split(/\s+/).filter(t => t.length > 2);
-        const score = terms.reduce((s, t) => s + (lower.includes(t) ? 1 : 0), 0);
-        const page = estimatePage(f.text, lower.indexOf(terms[0] ?? '') || 0, f.pages);
-        matchPerFile.push({ file: f, excerpt, page, score });
-        sources.push({
-          doc: f.name,
-          page,
-          excerpt: excerpt.slice(0, 160) + (excerpt.length > 160 ? 'â€¦' : ''),
-        });
-      }
-
-      matchPerFile.sort((a, b) => b.score - a.score);
-      const top = matchPerFile[0];
-
-      if (!top || top.excerpt.length < 30) {
-        return {
-          content: `I reviewed ${files.length} uploaded document${files.length > 1 ? 's' : ''} but couldn't find a passage that directly answers **"${query}"**. Try rephrasing, or upload more relevant material.\n\n**Uploaded:**\n${files.map(f => `â€¢ ${f.name} (${formatBytes(f.size)}, ~${f.pages} pages)`).join('\n')}`,
-          sources,
-        };
-      }
-
-      const intro =
-        files.length === 1
-          ? `Based on **${top.file.name}**, here's what I found:`
-          : `Based on ${files.length} uploaded documents, the strongest match comes from **${top.file.name}**:`;
-
-      const content =
-        `${intro}\n\n` +
-        `> ${top.excerpt.split('\n').join('\n> ')}\n\n` +
-        `**Summary:** ${top.excerpt.replace(/\s+/g, ' ').slice(0, 320)}${top.excerpt.length > 320 ? 'â€¦' : ''}\n\n` +
-        `I also considered: ${files
-          .filter(f => f.id !== top.file.id)
-          .map(f => `\`${f.name}\` (p.${estimatePage(f.text, 0, f.pages)})`)
-          .join(', ') || 'no other documents'}.`;
-
-      return { content, sources };
-    },
-    [],
-  );
-
   const send = useCallback(
     async (text: string) => {
       const trimmedText = text.trim();
@@ -1303,26 +1225,51 @@ export function StudentAIAssistant() {
         role: 'user',
         content: trimmedText,
         timestamp: new Date().toISOString(),
-        attachments: snapshotFiles.map(f => ({ id: f.id, name: f.name })),
+        attachments: snapshotFiles.map(f => ({ id: f.id, name: f.name, status: f.status })),
       };
 
       const nextMessages = [...messages, userMsg];
       setMessages(nextMessages);
       setInput('');
+      setUploadedFiles([]);
       setIsThinking(true);
 
-      setTimeout(() => {
-        const { content, sources } = generateGroundedAnswer(trimmedText, snapshotFiles);
+      try {
+        const token = window.localStorage.getItem('edurag-auth-token');
+        const response = await fetch('http://localhost:8000/api/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            question: trimmedText,
+            userId: getCurrentUserId(),
+            role: 'student',
+            selectedMaterialIds: snapshotFiles.map(file => file.id),
+            responseMode: 'both',
+            conversationId: activeConversationId,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success || !data.answer) {
+          throw new Error(data.error || 'The document search could not be completed.');
+        }
         const aiMsg: ChatMessage = {
           id: `a${Date.now()}`,
           role: 'assistant',
           timestamp: new Date().toISOString(),
-          content,
-          sources,
+          content: data.answer,
+          materialAnswer: typeof data.material_answer === 'string' ? data.material_answer : undefined,
+          aiAnswer: typeof data.ai_answer === 'string' ? data.ai_answer : undefined,
+          sources: Array.isArray(data.sources)
+            ? data.sources.map((source: { doc: string; page: number }) => ({ ...source, excerpt: '' }))
+            : [],
+          sourceType: data.source_type === 'general' ? 'general' : 'document',
+          attachments: snapshotFiles.map(f => ({ id: f.id, name: f.name, status: f.status })),
         };
         const updatedMessages = [...nextMessages, aiMsg];
         setMessages(updatedMessages);
-        setIsThinking(false);
 
         const title = generateConversationTitle(nextMessages);
         const convId = activeConversationId || `conv_${Date.now()}`;
@@ -1339,55 +1286,103 @@ export function StudentAIAssistant() {
           loadConversations().then(setConversations);
           setActiveConversationId(convId);
         });
-      }, 1200);
+      } catch (err) {
+        setMessages(prev => [...prev, {
+          id: `a${Date.now()}`,
+          role: 'assistant',
+          timestamp: new Date().toISOString(),
+          content: err instanceof Error ? err.message : 'I could not search your uploaded documents. Please try again.',
+          sources: [],
+        }]);
+      } finally {
+        setIsThinking(false);
+      }
     },
-    [activeConversationId, generateGroundedAnswer, isThinking, messages, uploadedFiles],
+    [activeConversationId, isThinking, messages, uploadedFiles],
   );
 
   const handleNewChat = useCallback(() => {
     setActiveConversationId(null);
     setMessages([]);
     setInput('');
+    setEditingMessageId(null);
+    setEditingMessageText('');
     setIsThinking(false);
   }, []);
 
   const handleSelectConversation = useCallback((conversation: ChatConversation) => {
     setActiveConversationId(conversation.conversationId);
     setMessages(conversation.messages);
+    setEditingMessageId(null);
+    setEditingMessageText('');
   }, []);
 
   const handleFileUpload = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = e.target.files;
       if (!files || files.length === 0) return;
-      e.target.value = '';
-
       const list = Array.from(files);
+      e.target.value = '';
       setIsUploading(true);
+      pushToast(
+        list.length === 1 ? `Uploading "${list[0].name}"…` : `Uploading ${list.length} files…`,
+        'warning',
+      );
 
       const accepted: UploadedFile[] = [];
       for (const file of list) {
         const ext = getExt(file.name);
         if (!ACCEPTED_EXT.includes(ext)) {
-          pushToast(`"${file.name}" â€” unsupported file type. Use PDF, PPTX, DOCX, TXT, MD, or CSV.`, 'error');
+          pushToast(`"${file.name}" — unsupported file type. Use PDF, PPTX, DOCX, TXT, MD, or CSV.`, 'error');
           continue;
         }
         if (file.size > MAX_FILE_SIZE) {
           pushToast(`"${file.name}" is larger than 10 MB. Please choose a smaller file.`, 'error');
           continue;
         }
+
+        const pendingId = `uploading_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const pendingFile: UploadedFile = {
+          id: pendingId,
+          name: file.name,
+          size: file.size,
+          type: file.type || ext,
+          pages: 1,
+          status: 'indexing',
+        };
+        setUploadedFiles(prev => [
+          ...prev,
+          pendingFile,
+        ].slice(-MAX_FILES));
+
         try {
-          const { text, pages } = await readFileText(file);
-          accepted.push({
-            id: `file_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-            name: file.name,
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('studentId', getCurrentUserId());
+          formData.append('course', 'Personal study material');
+          const token = window.localStorage.getItem('edurag-auth-token');
+          const response = await fetch('http://localhost:8000/api/materials/upload', {
+            method: 'POST',
+            headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+            body: formData,
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok || !data.success || !data.material?.id) {
+            throw new Error(data.error || 'The file could not be indexed.');
+          }
+          const uploadedFile: UploadedFile = {
+            id: data.material.id,
+            name: data.material.name || file.name,
             size: file.size,
             type: file.type || ext,
-            text,
-            pages,
-          });
+            pages: Number(data.material.pages) || 1,
+            status: data.material.status === 'ready' ? 'ready' : 'indexing',
+          };
+          accepted.push(uploadedFile);
+          setUploadedFiles(prev => prev.map(item => item.id === pendingId ? uploadedFile : item));
         } catch (err) {
-          pushToast(`Failed to read "${file.name}". ${err instanceof Error ? err.message : ''}`, 'error');
+          setUploadedFiles(prev => prev.filter(item => item.id !== pendingId));
+          pushToast(`Failed to upload "${file.name}". ${err instanceof Error ? err.message : ''}`, 'error');
         }
       }
 
@@ -1396,21 +1391,56 @@ export function StudentAIAssistant() {
         return;
       }
 
-      setUploadedFiles(prev => {
-        const next = [...prev, ...accepted];
-        if (next.length > MAX_FILES) {
-          pushToast(`Only the first ${MAX_FILES} files are kept â€” older uploads were removed.`, 'warning');
-          return next.slice(0, MAX_FILES);
-        }
-        return next;
-      });
-
       if (accepted.length === 1) {
-        pushToast(`"${accepted[0].name}" uploaded successfully â€” ready for Q&A.`, 'success');
+        pushToast(`"${accepted[0].name}" attached successfully — indexing for RAG.`, 'success');
       } else {
-        pushToast(`${accepted.length} files uploaded successfully â€” ready for Q&A.`, 'success');
+        pushToast(`${accepted.length} files attached successfully — indexing for RAG.`, 'success');
       }
-      setIsUploading(false);
+      const pendingIds = new Set(accepted.filter(file => file.status !== 'ready').map(file => file.id));
+      let indexingComplete = true;
+      if (pendingIds.size > 0) {
+        let indexedIds = new Set<string>();
+        for (let attempt = 0; attempt < 30 && indexedIds.size < pendingIds.size; attempt += 1) {
+          await new Promise(resolve => window.setTimeout(resolve, 1000));
+          try {
+            const statusResponse = await fetch(
+              `http://localhost:8000/api/materials?userId=${encodeURIComponent(getCurrentUserId())}&role=student`,
+            );
+            const materials = await statusResponse.json();
+            if (!statusResponse.ok || !Array.isArray(materials)) break;
+            indexedIds = new Set(
+              materials
+                .filter((material: { id?: string; status?: string }) =>
+                  pendingIds.has(material.id ?? '') && material.status === 'ready',
+                )
+                .map((material: { id: string }) => material.id),
+            );
+            if (indexedIds.size > 0) {
+              setUploadedFiles(prev => prev.map(file =>
+                indexedIds.has(file.id) ? { ...file, status: 'ready' } : file,
+              ));
+            }
+          } catch {
+            break;
+          }
+        }
+
+        if (indexedIds.size === pendingIds.size) {
+          pushToast(
+            accepted.length === 1
+              ? `"${accepted[0].name}" indexed successfully and is ready for questions.`
+              : `${accepted.length} files indexed successfully and are ready for questions.`,
+            'success',
+          );
+        } else {
+          indexingComplete = false;
+          pushToast('The document was uploaded, but indexing is still in progress. Send is enabled when indexing completes.', 'warning');
+        }
+      }
+      if (indexingComplete) {
+        setIsUploading(false);
+        textareaRef.current?.focus();
+      }
     },
     [pushToast],
   );
@@ -1431,6 +1461,149 @@ export function StudentAIAssistant() {
 
   const userInitial = 'A';
   const docCount = uploadedFiles.length;
+  const copyQuestion = useCallback(async (question: string) => {
+    try {
+      await navigator.clipboard.writeText(question);
+      pushToast('Question copied to clipboard.', 'success');
+    } catch {
+      pushToast('Could not copy the question.', 'error');
+    }
+  }, [pushToast]);
+
+  const startEditingMessage = useCallback((message: ChatMessage) => {
+    setEditingMessageId(message.id);
+    setEditingMessageText(message.content);
+    requestAnimationFrame(() => {
+      const textarea = editTextareaRef.current;
+      if (!textarea) return;
+      textarea.style.height = 'auto';
+      textarea.style.height = `${Math.min(textarea.scrollHeight, 128)}px`;
+      textarea.focus();
+      textarea.setSelectionRange(message.content.length, message.content.length);
+    });
+  }, []);
+
+  const cancelEditingMessage = useCallback(() => {
+    setEditingMessageId(null);
+    setEditingMessageText('');
+  }, []);
+
+  const saveEditedMessage = useCallback(async () => {
+    const trimmedText = editingMessageText.trim();
+    if (!editingMessageId || !trimmedText) return;
+
+    setEditingMessageId(null);
+    setEditingMessageText('');
+    setIsThinking(true);
+
+    const editedIndex = messages.findIndex(message => message.id === editingMessageId);
+    if (editedIndex < 0) {
+      setIsThinking(false);
+      return;
+    }
+
+    const originalMessage = messages[editedIndex];
+    const editedUserMessage: ChatMessage = {
+      ...originalMessage,
+      content: trimmedText,
+      timestamp: new Date().toISOString(),
+    };
+    const messagesBeforeEdit = messages.slice(0, editedIndex);
+    const messagesWithEdit = [
+      ...messagesBeforeEdit,
+      editedUserMessage,
+      ...messages.slice(editedIndex + 1),
+    ];
+    setMessages(messagesWithEdit);
+
+    try {
+      const token = window.localStorage.getItem('edurag-auth-token');
+      const response = await fetch('http://localhost:8000/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          question: trimmedText,
+          userId: getCurrentUserId(),
+          role: 'student',
+          selectedMaterialIds: (originalMessage.attachments || []).map(file => file.id),
+          responseMode: 'both',
+          conversationId: activeConversationId,
+          history: messagesBeforeEdit.map(message => ({
+            role: message.role,
+            content: message.content,
+          })),
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success || !data.answer) {
+        throw new Error(data.error || 'The answer could not be regenerated.');
+      }
+
+      const regeneratedAnswer: ChatMessage = {
+        id: messages[editedIndex + 1]?.role === 'assistant'
+          ? messages[editedIndex + 1].id
+          : `a${Date.now()}`,
+        role: 'assistant',
+        timestamp: new Date().toISOString(),
+        content: data.answer,
+        materialAnswer: typeof data.material_answer === 'string' ? data.material_answer : undefined,
+        aiAnswer: typeof data.ai_answer === 'string' ? data.ai_answer : undefined,
+        sources: Array.isArray(data.sources)
+          ? data.sources.map((source: { doc: string; page: number }) => ({ ...source, excerpt: '' }))
+          : [],
+        sourceType: data.source_type === 'general' ? 'general' : 'document',
+        attachments: originalMessage.attachments,
+      };
+      const answerIndex = editedIndex + 1;
+      const regeneratedMessages = messagesWithEdit[answerIndex]?.role === 'assistant'
+        ? messagesWithEdit.map((message, index) => index === answerIndex ? regeneratedAnswer : message)
+        : [
+            ...messagesWithEdit.slice(0, answerIndex),
+            regeneratedAnswer,
+            ...messagesWithEdit.slice(answerIndex),
+          ];
+      setMessages(regeneratedMessages);
+
+      const conversationId = activeConversationId || `conv_${Date.now()}`;
+      const conversation: ChatConversation = {
+        conversationId,
+        userId: getCurrentUserId(),
+        role: 'student',
+        title: generateConversationTitle(regeneratedMessages),
+        messages: regeneratedMessages,
+        updatedAt: new Date().toISOString(),
+      };
+      await saveConversation(conversation);
+      setActiveConversationId(conversationId);
+      setConversations(prev => [
+        conversation,
+        ...prev.filter(item => item.conversationId !== conversationId),
+      ]);
+    } catch (err) {
+      const errorMessage: ChatMessage = {
+        id: messages[editedIndex + 1]?.role === 'assistant'
+          ? messages[editedIndex + 1].id
+          : `a${Date.now()}`,
+        role: 'assistant',
+        timestamp: new Date().toISOString(),
+        content: err instanceof Error ? err.message : 'I could not regenerate the answer. Please try again.',
+        sources: [],
+      };
+      const answerIndex = editedIndex + 1;
+      setMessages(messagesWithEdit[answerIndex]?.role === 'assistant'
+        ? messagesWithEdit.map((message, index) => index === answerIndex ? errorMessage : message)
+        : [
+            ...messagesWithEdit.slice(0, answerIndex),
+            errorMessage,
+            ...messagesWithEdit.slice(answerIndex),
+          ]);
+    } finally {
+      setIsThinking(false);
+    }
+  }, [activeConversationId, editingMessageId, editingMessageText, messages]);
 
   return (
     <div className="space-y-4">
@@ -1536,7 +1709,9 @@ export function StudentAIAssistant() {
                       </span>
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium text-neutral-800 dark:text-neutral-200 truncate">{f.name}</p>
-                        <p className="text-xs text-neutral-500 dark:text-neutral-400">{formatBytes(f.size)} Â· ~{f.pages} pages</p>
+                        <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                          {formatBytes(f.size)} Â· ~{f.pages} pages Â· {f.status === 'ready' ? 'Ready for RAG' : 'Indexing'}
+                        </p>
                       </div>
                       <button
                         onClick={() => removeUploadedFile(f.id)}
@@ -1608,28 +1783,62 @@ export function StudentAIAssistant() {
                       {/* Uploaded file cards inside the message */}
                       {msg.attachments && msg.attachments.length > 0 && (
                         <div className="mb-2 flex flex-wrap gap-2">
+                          {msg.role === 'assistant' && (
+                            <span className="text-[10px] uppercase tracking-wide font-semibold text-neutral-500 dark:text-neutral-400 self-center mr-1">
+                              {msg.role === 'assistant' ? 'Used' : 'Attached'}:
+                            </span>
+                          )}
                           {msg.attachments.map(att => {
-                            const fullFile = uploadedFiles.find(f => f.id === att.id);
                             const kind = fileIconFor(att.name);
                             return (
                               <div
                                 key={att.id}
                                 className={cn(
-                                  'flex items-center gap-2 px-2.5 py-1.5 rounded-xl border text-xs font-medium',
+                                  'aisa-message-file-card text-left cursor-pointer hover:opacity-90 transition-opacity',
                                   msg.role === 'user'
                                     ? 'bg-white/15 border-white/30 text-white'
                                     : fileBadgeClass[kind]
                                 )}
+                                onClick={() => openMaterialFile(att.id)}
+                                title={`Preview ${att.name}`}
+                                role="button"
+                                tabIndex={0}
+                                onKeyDown={(event) => {
+                                  if (event.key === 'Enter' || event.key === ' ') {
+                                    event.preventDefault();
+                                    openMaterialFile(att.id);
+                                  }
+                                }}
                               >
-                                <FileText className="h-3.5 w-3.5 shrink-0" />
+                                {kind === 'pdf' ? (
+                                  <FileText className="h-3.5 w-3.5 shrink-0" />
+                                ) : (
+                                  <span className="text-[10px] font-extrabold uppercase">{kind === 'text' ? 'TXT' : kind}</span>
+                                )}
                                 <span className="truncate max-w-[10rem]">{att.name}</span>
-                                {fullFile && (
+                                {att.status && (
                                   <span className={cn(
                                     'shrink-0 px-1.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide',
-                                    msg.role === 'user' ? 'bg-white/20 text-white' : 'bg-black/5 dark:bg-white/10'
+                                    'bg-black/5 dark:bg-white/10'
                                   )}>
-                                    {kind === 'text' ? 'txt' : kind}
+                                    {att.status === 'ready' ? 'Ready' : 'Indexing'}
                                   </span>
+                                )}
+                                {msg.role === 'assistant' && uploadedFiles.some(file => file.id === att.id) && (
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      removeUploadedFile(att.id);
+                                    }}
+                                    className={cn(
+                                      'aisa-message-file-remove'
+                                    )}
+                                    title={`Remove ${att.name}`}
+                                    aria-label={`Remove ${att.name}`}
+                                  >
+                                    <X className="h-3.5 w-3.5" />
+                                  </button>
                                 )}
                               </div>
                             );
@@ -1637,43 +1846,154 @@ export function StudentAIAssistant() {
                         </div>
                       )}
 
-                      <p className="text-sm whitespace-pre-line leading-relaxed">{msg.content}</p>
+                      {msg.role === 'assistant' ? (
+                        <div className="aisa-answer-content">
+                          <section className="aisa-answer-section">
+                            <h3 className="aisa-answer-section-title">
+                              <span className="aisa-answer-section-icon aisa-answer-section-icon--materials">
+                                <FileText className="h-3.5 w-3.5" />
+                              </span>
+                              Based on Study Material
+                            </h3>
+                            <p className="aisa-answer-muted">
+                              Answer strictly from the uploaded document.
+                            </p>
+                            <div>{renderAnswerContent(msg.materialAnswer || 'No document-based answer was available for this question.')}</div>
+                          </section>
+
+                          <section className="aisa-answer-section aisa-answer-section--ai">
+                            <h3 className="aisa-answer-section-title">
+                              <span className="aisa-answer-section-icon aisa-answer-section-icon--ai">
+                                <Sparkles className="h-3.5 w-3.5" />
+                              </span>
+                              Based on AI — Final Answer
+                            </h3>
+                            <p className="aisa-answer-muted">
+                              Complete answer using general AI knowledge, beyond the uploaded document when necessary.
+                            </p>
+                            <div>{renderAnswerContent(msg.aiAnswer || msg.content)}</div>
+                          </section>
+                        </div>
+                      ) : (
+                        <>
+                          {editingMessageId === msg.id ? (
+                            <div className="space-y-2">
+                              <textarea
+                                ref={editTextareaRef}
+                                value={editingMessageText}
+                                onChange={event => {
+                                  setEditingMessageText(event.target.value);
+                                  event.target.style.height = 'auto';
+                                  event.target.style.height = `${Math.min(event.target.scrollHeight, 128)}px`;
+                                }}
+                                onKeyDown={event => {
+                                  if (event.key === 'Escape') {
+                                    event.preventDefault();
+                                    cancelEditingMessage();
+                                  }
+                                  if (event.key === 'Enter' && !event.shiftKey) {
+                                    event.preventDefault();
+                                    void saveEditedMessage();
+                                  }
+                                }}
+                                className="w-full min-w-[16rem] resize-none rounded-lg border border-white/40 bg-white/15 px-3 py-2 text-sm leading-relaxed text-white outline-none placeholder:text-white/60 focus:border-white"
+                                aria-label="Edit message"
+                                rows={1}
+                              />
+                              <div className="flex items-center justify-end gap-1">
+                                <button
+                                  type="button"
+                                  onClick={cancelEditingMessage}
+                                  className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-white/75 transition-colors hover:bg-white/15 hover:text-white"
+                                  title="Cancel edit"
+                                >
+                                  <X className="h-3 w-3" />
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void saveEditedMessage()}
+                                  disabled={!editingMessageText.trim()}
+                                  className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-white/90 transition-colors hover:bg-white/15 hover:text-white disabled:opacity-50"
+                                  title="Save edit"
+                                >
+                                  <CheckCircle2 className="h-3 w-3" />
+                                  Save
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="text-sm whitespace-pre-line leading-relaxed">{msg.content}</p>
+                          )}
+                          <div className="mt-2 flex items-center justify-end gap-1 border-t border-white/20 pt-2">
+                            <button
+                              type="button"
+                              onClick={() => copyQuestion(msg.content)}
+                              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-white/75 transition-colors hover:bg-white/15 hover:text-white"
+                              title="Copy question"
+                              aria-label="Copy question"
+                            >
+                              <Copy className="h-3 w-3" />
+                              Copy
+                            </button>
+                            {editingMessageId !== msg.id && (
+                              <button
+                                type="button"
+                                onClick={() => startEditingMessage(msg)}
+                                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-white/75 transition-colors hover:bg-white/15 hover:text-white"
+                                title="Edit question"
+                                aria-label="Edit question"
+                              >
+                                <Edit3 className="h-3 w-3" />
+                                Edit
+                              </button>
+                            )}
+                          </div>
+                        </>
+                      )}
 
                       {/* Source references â€” fully dynamic */}
                       {msg.sources && msg.sources.length > 0 && (
-                        <div className="mt-3 pt-3 border-t border-neutral-200/70 dark:border-neutral-700/70 space-y-2">
-                          <p className="text-xs font-semibold flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400 uppercase tracking-wide">
-                            <Quote className="h-3.5 w-3.5" />
-                            Source References
+                        <div className="aisa-message-sources">
+                          <p className="aisa-sources-label">
+                            <Sparkles className="h-3.5 w-3.5" />
+                          Study material sources
                           </p>
 
                           {msg.sources.map((src, i) => {
                             const kind = fileIconFor(src.doc);
                             return (
-                              <div
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const matchingAttachment = msg.attachments?.find(file => file.name === src.doc);
+                                  if (matchingAttachment) {
+                                    openMaterialFile(matchingAttachment.id);
+                                  } else {
+                                    setSourcesOpen(true);
+                                  }
+                                }}
                                 key={`${src.doc}-${src.page}-${i}`}
-                                className="flex items-start gap-2 text-xs rounded-lg px-2.5 py-2 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300"
+                                className="aisa-source-card"
+                                title={`Open ${src.doc}, page ${src.page}`}
                               >
                                 <span className={cn(
-                                  'grid place-items-center h-6 w-6 rounded-md border text-[10px] font-bold uppercase shrink-0',
+                                  'aisa-source-card-icon',
                                   fileBadgeClass[kind]
                                 )}>
-                                  {kind === 'text' ? 'txt' : kind}
+                                  {kind === 'pdf' ? <FileText className="h-3.5 w-3.5" /> : (kind === 'text' ? 'TXT' : kind.toUpperCase())}
                                 </span>
                                 <div className="min-w-0 flex-1">
-                                  <div className="flex items-center gap-2">
-                                    <span className="font-semibold truncate">{src.doc}</span>
-                                    <span className="shrink-0 px-1.5 py-0.5 rounded-md bg-neutral-100 dark:bg-neutral-800 text-neutral-500 dark:text-neutral-400 font-bold">
-                                      p.{src.page}
-                                    </span>
-                                  </div>
+                                  <div className="aisa-source-card-name">{src.doc}</div>
+                                  <div className="aisa-source-card-page">Page {src.page}</div>
                                   {src.excerpt && (
                                     <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-1 line-clamp-2 italic">
                                       "{src.excerpt}"
                                     </p>
                                   )}
                                 </div>
-                              </div>
+                                <ArrowRight className="aisa-source-card-arrow h-3.5 w-3.5" />
+                              </button>
                             );
                           })}
                         </div>
@@ -1723,50 +2043,63 @@ export function StudentAIAssistant() {
           )}
 
           {/* Composer */}
-          <div className="p-4 border-t border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 flex-shrink-0">
-            {/* Compact file cards for current attachments */}
+          <div className="aisa-composer-wrap">
             {uploadedFiles.length > 0 && (
-              <div className="flex flex-wrap gap-2 mb-2">
-                {uploadedFiles.map(f => {
-                  const kind = fileIconFor(f.name);
-                  return (
-                    <div
-                      key={f.id}
-                      className={cn(
-                        'flex items-center gap-2 pl-2.5 pr-1.5 py-1.5 rounded-xl border text-xs font-medium',
-                        fileBadgeClass[kind]
-                      )}
-                    >
-                      <FileText className="h-3.5 w-3.5 shrink-0" />
-                      <span className="truncate max-w-[10rem]">{f.name}</span>
-                      <span className="text-[10px] opacity-70">{formatBytes(f.size)}</span>
-                      <button
-                        onClick={() => removeUploadedFile(f.id)}
-                        className="ml-0.5 grid place-items-center h-5 w-5 rounded-md hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
-                        title="Remove"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </div>
-                  );
-                })}
+              <div className="aisa-attachment-preview" aria-live="polite" aria-label="Files attached to the next question">
+                <p className="aisa-attachment-label">Attached to your next question</p>
+                <div className="aisa-attachment-list">
+                  {uploadedFiles.map(file => {
+                    const kind = fileIconFor(file.name);
+                    return (
+                      <div key={file.id} className="aisa-attachment-card">
+                        <span className={cn('aisa-attachment-icon', fileBadgeClass[kind])}>
+                          {kind === 'pdf' ? <FileText className="h-4 w-4" /> : kind === 'text' ? 'TXT' : kind.toUpperCase()}
+                        </span>
+                        <span className="aisa-attachment-meta">
+                          <span className="aisa-attachment-name">{file.name}</span>
+                          <span className="aisa-attachment-size flex items-center gap-1">
+                            {file.status === 'ready' ? (
+                              <>
+                                {formatBytes(file.size)} <span aria-hidden="true">·</span> Ready
+                              </>
+                            ) : (
+                              <>
+                                <LoaderCircle className="h-3 w-3 animate-spin text-primary-500" />
+                                Indexing…
+                              </>
+                            )}
+                          </span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => removeUploadedFile(file.id)}
+                          className="aisa-attachment-remove"
+                          title={`Remove ${file.name}`}
+                          aria-label={`Remove ${file.name}`}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
 
-            <div className="flex items-end gap-2 bg-neutral-100 dark:bg-neutral-800 rounded-2xl pl-4 pr-2 py-2">
+            <div className="aisa-composer">
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="p-2 rounded-xl text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300 transition-colors disabled:opacity-50"
-                title="Attach file"
+                className="aisa-composer-tool-btn aisa-composer-attach"
+                title="Attach files"
+                aria-label="Attach files"
                 type="button"
-                disabled={isUploading}
               >
-                {isUploading ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <Paperclip className="h-5 w-5" />}
+                <Paperclip className="h-5 w-5" />
               </button>
               <input
                 ref={fileInputRef}
                 type="file"
-                className="hidden"
+                className="aisa-file-input"
                 onChange={handleFileUpload}
                 multiple
                 accept=".pdf,.pptx,.docx,.txt,.md,.csv,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown,text/csv"
@@ -1786,26 +2119,29 @@ export function StudentAIAssistant() {
                   }
                 }}
                 placeholder="Ask anything from your documentsâ€¦"
-                className="flex-1 bg-transparent text-sm outline-none resize-none py-2 max-h-32 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+                className="aisa-composer-textarea"
+                aria-label="Message EduRAG Assistant"
                 rows={1}
               />
 
               <button
                 onClick={() => send(input)}
-                disabled={!input.trim() || isThinking}
-                className="p-2 rounded-xl bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50 disabled:pointer-events-none transition-colors"
+                disabled={!input.trim() || isThinking || isUploading}
+                className="aisa-composer-send"
                 type="button"
-                title="Send"
+                title={isUploading ? 'Waiting for document indexing to finish' : 'Send'}
+                aria-label="Send message"
               >
-                <Send className="h-5 w-5" />
+                <Send className="h-[1.1rem] w-[1.1rem]" />
               </button>
             </div>
+            <p className="aisa-composer-hint">Enter to send <span aria-hidden="true">·</span> Shift + Enter for a new line</p>
           </div>
         </div>
-
-        {/* Toasts */}
-        <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       </div>
+
+      {/* Toasts — rendered outside chat wrapper to avoid any clipping */}
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }
@@ -1815,8 +2151,40 @@ export function StudentAIAssistant() {
 ========================================================= */
 
 export function StudentNotes() {
-  const [generated, setGenerated] =
-    useState(false);
+  const [generated, setGenerated] = useState(false);
+  const [notes, setNotes] = useState<any[]>([]);
+  const [activeNote, setActiveNote] = useState<any | null>(null);
+  const [editingNote, setEditingNote] = useState(false);
+  const [noteDraft, setNoteDraft] = useState('');
+  const [isGeneratingNote, setIsGeneratingNote] = useState(false);
+  const [notesLoading, setNotesLoading] = useState(true);
+  const [notesError, setNotesError] = useState<string | null>(null);
+  const [noteTopic, setNoteTopic] = useState('');
+  const [uploadedNoteFile, setUploadedNoteFile] = useState<{ id: string; name: string } | null>(null);
+  const [noteUploadStatus, setNoteUploadStatus] = useState<string | null>(null);
+  const [isUploadingNoteFile, setIsUploadingNoteFile] = useState(false);
+  const noteFileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchNotes()
+      .then(data => {
+        if (!cancelled) {
+          setNotes(data);
+          if (data.length > 0) {
+            setActiveNote(data[0]);
+            setGenerated(true);
+          }
+        }
+      })
+      .catch(error => {
+        if (!cancelled) setNotesError(error instanceof Error ? error.message : 'Unable to load notes.');
+      })
+      .finally(() => {
+        if (!cancelled) setNotesLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   const [type, setType] =
     useState<
@@ -1935,6 +2303,49 @@ Minimum edges for connectivity: V - 1`,
     },
   };
 
+  const handleNoteFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    const allowedExtensions = ['pdf', 'pptx', 'docx', 'txt', 'md', 'csv'];
+    const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
+    if (!allowedExtensions.includes(extension)) {
+      setNoteUploadStatus('Upload a PDF, PPTX, DOCX, TXT, MD, or CSV file.');
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setNoteUploadStatus('This file is larger than 10 MB.');
+      return;
+    }
+
+    setIsUploadingNoteFile(true);
+    setNoteUploadStatus(`Uploading ${file.name}…`);
+    try {
+      const formData = new FormData();
+      formData.append('file', file, file.name);
+      formData.append('studentId', getCurrentUserId());
+      formData.append('course', 'Notes study material');
+      const token = window.localStorage.getItem('edurag-auth-token');
+      const response = await fetch('http://localhost:8000/api/materials/upload', {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        body: formData,
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success || !data.material?.id) {
+        throw new Error(data.error || 'The document could not be uploaded.');
+      }
+      setUploadedNoteFile({ id: data.material.id, name: data.material.name || file.name });
+      setNoteUploadStatus('Uploaded and ready to generate notes.');
+    } catch (error) {
+      setUploadedNoteFile(null);
+      setNoteUploadStatus(error instanceof Error ? error.message : 'The document could not be uploaded.');
+    } finally {
+      setIsUploadingNoteFile(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <SectionHeader
@@ -1947,38 +2358,79 @@ Minimum edges for connectivity: V - 1`,
         <Card className="lg:col-span-1">
           <CardHeader
             title="Generate Notes"
-            subtitle="Choose type and source"
+          subtitle="Choose a topic or upload a document"
             icon={Sparkles}
           />
 
           <CardBody className="space-y-4">
             <div>
               <label className="text-sm font-medium text-neutral-700 mb-2 block">
-                Select Course
+              Enter Topic or Chapter
               </label>
+            <input
+              type="text"
+              value={noteTopic}
+              onChange={event => setNoteTopic(event.target.value)}
+              placeholder="e.g. Graph traversal, Chapter 4"
+              className="w-full h-10 px-3 rounded-xl border border-neutral-200 bg-white text-sm outline-none focus:border-primary-400"
+            />
+          </div>
 
-              <select className="w-full h-10 px-3 rounded-xl border border-neutral-200 bg-white text-sm outline-none focus:border-primary-400">
-                {studentCourses.map(c => (
-                  <option key={c.id}>
-                    {c.code} â€” {c.title}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="text-sm font-medium text-neutral-700 mb-2 block">
-                Select Chapter / Document
-              </label>
-
-              <select className="w-full h-10 px-3 rounded-xl border border-neutral-200 bg-white text-sm outline-none focus:border-primary-400">
-                {documents.slice(0, 4).map(d => (
-                  <option key={d.id}>
-                    {d.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+          <div>
+            <label className="text-sm font-medium text-neutral-700 mb-2 block">
+              Upload File
+            </label>
+            <input
+              ref={noteFileInputRef}
+              type="file"
+              onChange={handleNoteFileUpload}
+              className="hidden"
+              accept=".pdf,.pptx,.docx,.txt,.md,.csv,application/pdf,text/plain,text/markdown,text/csv"
+            />
+            <button
+              type="button"
+              onClick={() => noteFileInputRef.current?.click()}
+              disabled={isUploadingNoteFile}
+              className="w-full flex items-center gap-3 min-h-12 px-3 rounded-xl border border-dashed border-neutral-300 bg-neutral-50 text-left hover:border-primary-400 hover:bg-primary-50 transition-colors disabled:opacity-60"
+            >
+              <span className="grid place-items-center h-8 w-8 rounded-lg bg-primary-100 text-primary-600">
+                {isUploadingNoteFile ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium text-neutral-700 truncate">
+                  {uploadedNoteFile?.name || 'Choose a study document'}
+                </span>
+                <span className="block text-xs text-neutral-500">
+                  {isUploadingNoteFile ? 'Uploading and indexing…' : 'PDF, PPTX, DOCX, TXT, MD, or CSV'}
+                </span>
+              </span>
+              {uploadedNoteFile && (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  onClick={event => {
+                    event.stopPropagation();
+                    setUploadedNoteFile(null);
+                    setNoteUploadStatus(null);
+                  }}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      setUploadedNoteFile(null);
+                      setNoteUploadStatus(null);
+                    }
+                  }}
+                  className="grid place-items-center h-7 w-7 rounded-lg text-neutral-400 hover:bg-error-50 hover:text-error-600"
+                  aria-label="Remove uploaded file"
+                >
+                  <X className="h-4 w-4" />
+                </span>
+              )}
+            </button>
+            {noteUploadStatus && (
+              <p className="mt-1.5 text-xs text-neutral-500">{noteUploadStatus}</p>
+            )}
+          </div>
 
             <div>
               <label className="text-sm font-medium text-neutral-700 mb-2 block">
@@ -2014,10 +2466,45 @@ Minimum edges for connectivity: V - 1`,
             <Button
               icon={Sparkles}
               className="w-full"
-              onClick={() => setGenerated(true)}
+              disabled={isGeneratingNote || (!noteTopic.trim() && !uploadedNoteFile)}
+              onClick={async () => {
+                setIsGeneratingNote(true);
+                setNotesError(null);
+                try {
+                  const label = noteTypes.find(item => item.id === type)?.label || 'Smart Notes';
+                  const response = await sendChatMessage({
+                    question: `Create ${label} for ${noteTopic || uploadedNoteFile?.name || 'the uploaded study material'}. Return only the note content, with clear headings and bullet points.`,
+                    topic: noteTopic || uploadedNoteFile?.name || label,
+                    difficulty: 'Medium',
+                    context: uploadedNoteFile ? `Use uploaded document ${uploadedNoteFile.name} as source material.` : '',
+                    selectedMaterialIds: uploadedNoteFile ? [uploadedNoteFile.id] : [],
+                    responseMode: 'ai',
+                  });
+                  const note = {
+                    id: `note_${Date.now()}`,
+                    title: `${label} — ${noteTopic || uploadedNoteFile?.name || 'Study Material'}`,
+                    type,
+                    course: 'Student Study Material',
+                    chapter: noteTopic || uploadedNoteFile?.name || 'General',
+                    content: response.ai_answer || response.answer,
+                    createdAt: new Date().toISOString(),
+                    userId: getCurrentUserId(),
+                  };
+                  if (!await createNote(note)) throw new Error('The note could not be saved.');
+                  setNotes(current => [note, ...current]);
+                  setActiveNote(note);
+                  setNoteDraft(note.content);
+                  setGenerated(true);
+                } catch (error) {
+                  setNotesError(error instanceof Error ? error.message : 'Unable to generate notes.');
+                } finally {
+                  setIsGeneratingNote(false);
+                }
+              }}
             >
-              Generate Smart Notes
+              {isGeneratingNote ? 'Generating…' : 'Generate Smart Notes'}
             </Button>
+            {notesError && <p className="text-xs text-error-600">{notesError}</p>}
           </CardBody>
         </Card>
 
@@ -2052,6 +2539,16 @@ Minimum edges for connectivity: V - 1`,
                     variant="ghost"
                     size="sm"
                     icon={Download}
+                    onClick={() => {
+                      if (!activeNote) return;
+                      const blob = new Blob([activeNote.content], { type: 'text/plain;charset=utf-8' });
+                      const url = URL.createObjectURL(blob);
+                      const link = document.createElement('a');
+                      link.href = url;
+                      link.download = `${activeNote.title.replace(/[^a-z0-9]+/gi, '_')}.txt`;
+                      link.click();
+                      URL.revokeObjectURL(url);
+                    }}
                   >
                     Export
                   </Button>
@@ -2060,21 +2557,72 @@ Minimum edges for connectivity: V - 1`,
                     variant="ghost"
                     size="sm"
                     icon={BookmarkIcon}
+                    onClick={() => {
+                      if (activeNote) {
+                        setEditingNote(true);
+                        setNoteDraft(activeNote.content);
+                      }
+                    }}
                   >
-                    Save
+                    Edit
                   </Button>
+                  {editingNote && (
+                    <Button
+                      size="sm"
+                      onClick={async () => {
+                        if (!activeNote) return;
+                        const updated = { ...activeNote, content: noteDraft, updatedAt: new Date().toISOString() };
+                        if (!await updateNote(updated)) {
+                          setNotesError('The note could not be updated.');
+                          return;
+                        }
+                        setActiveNote(updated);
+                        setNotes(current => current.map(item => item.id === updated.id ? updated : item));
+                        setEditingNote(false);
+                      }}
+                    >
+                      Save
+                    </Button>
+                  )}
+                  {activeNote && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={Trash2}
+                      onClick={async () => {
+                        if (!await deleteNote(activeNote.id)) {
+                          setNotesError('The note could not be deleted.');
+                          return;
+                        }
+                        const remaining = notes.filter(item => item.id !== activeNote.id);
+                        setNotes(remaining);
+                        setActiveNote(remaining[0] || null);
+                        setGenerated(remaining.length > 0);
+                      }}
+                    >
+                      Delete
+                    </Button>
+                  )}
                 </div>
               </div>
 
               <div className="p-6 flex-1 overflow-y-auto">
                 <h2 className="text-xl font-bold font-display text-neutral-900 mb-4">
-                  {noteContent[type].title}
+                  {activeNote?.title || noteContent[type].title}
                 </h2>
 
                 <div className="prose prose-sm max-w-none">
-                  <pre className="whitespace-pre-wrap font-sans text-sm text-neutral-700 leading-relaxed">
-                    {noteContent[type].body}
-                  </pre>
+                  {editingNote ? (
+                    <textarea
+                      value={noteDraft}
+                      onChange={event => setNoteDraft(event.target.value)}
+                      className="w-full min-h-80 rounded-xl border border-neutral-200 p-4 text-sm text-neutral-700 outline-none focus:border-primary-400"
+                    />
+                  ) : (
+                    <pre className="whitespace-pre-wrap font-sans text-sm text-neutral-700 leading-relaxed">
+                      {activeNote?.content || noteContent[type].body}
+                    </pre>
+                  )}
                 </div>
               </div>
             </Card>
@@ -2083,7 +2631,9 @@ Minimum edges for connectivity: V - 1`,
       </div>
 
       {/* Recently generated notes */}
-      {generatedNotes.length > 0 && (
+      {notesLoading ? (
+        <Card><CardBody><p className="text-sm text-neutral-400 text-center py-6">Loading saved notes...</p></CardBody></Card>
+      ) : notes.length > 0 && (
         <Card>
           <CardHeader
             title="Recently Generated Notes"
@@ -2092,7 +2642,7 @@ Minimum edges for connectivity: V - 1`,
 
           <CardBody>
             <div className="space-y-2">
-              {generatedNotes.map(note => (
+              {notes.map(note => (
                 <div
                   key={note.id}
                   className="flex items-center gap-3 p-3 rounded-xl border border-neutral-200 hover:bg-neutral-50 transition-colors"
@@ -2116,8 +2666,13 @@ Minimum edges for connectivity: V - 1`,
                     variant="ghost"
                     size="sm"
                     icon={Download}
+                    onClick={() => {
+                      setActiveNote(note);
+                      setGenerated(true);
+                      setNoteDraft(note.content);
+                    }}
                   >
-                    Open
+                    View
                   </Button>
                 </div>
               ))}

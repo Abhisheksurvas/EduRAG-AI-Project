@@ -83,18 +83,18 @@ export async function fetchDocuments() {
 
 export async function fetchQuizzes() {
   const data = await apiGet<any[]>('/api/quizzes');
-  if (data && Array.isArray(data) && data.length > 0) {
+  if (data && Array.isArray(data)) {
     return data;
   }
-  return quizzes;
+  return [];
 }
 
 export async function fetchQuizQuestions() {
   const data = await apiGet<any[]>('/api/quiz-questions');
-  if (data && Array.isArray(data) && data.length > 0) {
+  if (data && Array.isArray(data)) {
     return data;
   }
-  return quizQuestions;
+  return [];
 }
 
 export async function fetchQuizResults() {
@@ -165,6 +165,41 @@ export async function fetchNotes() {
   return [];
 }
 
+export async function createNote(note: any): Promise<boolean> {
+  return apiPost('/api/notes', note);
+}
+
+export async function updateNote(note: any): Promise<boolean> {
+  return apiPut('/api/notes', note);
+}
+
+export async function deleteNote(id: string): Promise<boolean> {
+  return apiDelete('/api/notes', [id]);
+}
+
+export async function updateNotification(notification: any): Promise<boolean> {
+  return apiPut('/api/notifications', notification);
+}
+
+export async function deleteNotification(id: string): Promise<boolean> {
+  return apiDelete('/api/notifications', [id]);
+}
+
+export async function saveQuiz(quiz: any, quizQuestions: any[]): Promise<boolean> {
+  const quizSaved = await apiPost('/api/quizzes', quiz);
+  if (!quizSaved) return false;
+  for (const question of quizQuestions) {
+    if (!await apiPost('/api/quiz-questions', { ...question, quizId: quiz.id })) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export async function saveQuizResult(result: any): Promise<boolean> {
+  return apiPost('/api/quiz-results', result);
+}
+
 // ============ STATS ============
 
 export async function fetchStats() {
@@ -200,8 +235,17 @@ export async function sendChatMessage(payload: {
   difficulty?: string;
   context?: string;
   selectedMaterialIds?: string[];
+  responseMode?: 'materials' | 'ai' | 'both';
   history?: { role: string; content: string }[];
-}): Promise<{ success: boolean; answer: string; sources: any[]; attachments: any[]; source_type?: string }> {
+}): Promise<{
+  success: boolean;
+  answer: string;
+  material_answer?: string;
+  ai_answer?: string;
+  sources: any[];
+  attachments: any[];
+  source_type?: string;
+}> {
   const userId = payload.userId || getUserId();
   const role = payload.role || getUserRole();
 
@@ -215,12 +259,21 @@ export async function sendChatMessage(payload: {
       ...payload,
       userId,
       role,
+      responseMode: payload.responseMode || 'both',
     }),
   });
 
   const data = await res.json();
   if (res.ok && data.success && data.answer) {
-    return { success: true, answer: data.answer, sources: data.sources || [], attachments: data.attachments || [], source_type: data.source_type };
+    return {
+      success: true,
+      answer: data.answer,
+      material_answer: data.material_answer,
+      ai_answer: data.ai_answer,
+      sources: data.sources || [],
+      attachments: data.attachments || [],
+      source_type: data.source_type,
+    };
   }
   throw new Error(data.error || 'Failed to fetch AI response');
 }

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Bot, Send, Sparkles, BookOpen, ExternalLink } from 'lucide-react';
+import { Bot, Send, Sparkles, BookOpen, ExternalLink, Paperclip, FileText, X } from 'lucide-react';
 import { Card, CardHeader, CardBody } from '@/components/ui';
 
 const STREAMLIT_APP_URL = 'http://localhost:8501';
@@ -9,6 +9,7 @@ export default function AIStudyAssistant() {
     { id: 1, sender: 'bot', text: 'Hi! Ask me anything about your syllabus, lecture slides, or exam reference files.' },
   ]);
   const [input, setInput] = useState('');
+  const [attachment, setAttachment] = useState(null);
 
   const handleSend = async (e) => {
     e.preventDefault();
@@ -55,6 +56,12 @@ export default function AIStudyAssistant() {
     }
   };
 
+  const handleFileChange = (e) => {
+    const [file] = e.target.files || [];
+    if (file) setAttachment(file);
+    e.target.value = '';
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -92,17 +99,42 @@ export default function AIStudyAssistant() {
                 </div>
               ))}
             </div>
-            <form onSubmit={handleSend} className="p-4 border-t border-neutral-100 bg-neutral-50 flex gap-2">
-              <input 
-                type="text" 
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                placeholder="Ask a question about database indexing or algorithms..."
-                className="flex-1 px-4 py-2 border border-neutral-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white"
-              />
-              <button type="submit" className="bg-primary-600 hover:bg-primary-700 text-white p-2.5 rounded-xl transition-all">
-                <Send className="h-5 w-5" />
-              </button>
+            <form onSubmit={handleSend} className="aisa-composer-wrap">
+              {attachment && (
+                <div className="aisa-attachments" aria-live="polite">
+                  <div className="aisa-attachment-chip">
+                    <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span className="max-w-[14rem] truncate">{attachment.name}</span>
+                    <button type="button" onClick={() => setAttachment(null)} aria-label={`Remove ${attachment.name}`}>
+                      <X className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
+                  </div>
+                </div>
+              )}
+              <div className="aisa-composer">
+                <label className="aisa-composer-tool-btn" title="Attach a file">
+                  <Paperclip className="h-5 w-5" aria-hidden="true" />
+                  <span className="sr-only">Attach a file</span>
+                  <input className="aisa-file-input" type="file" accept=".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg" onChange={handleFileChange} />
+                </label>
+                <textarea
+                  value={input}
+                  onChange={e => setInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      e.currentTarget.form?.requestSubmit();
+                    }
+                  }}
+                  rows={1}
+                  placeholder="Ask anything about your studies..."
+                  aria-label="Message the AI Study Assistant"
+                  className="aisa-composer-textarea"
+                />
+                <button type="submit" className="aisa-composer-send" disabled={!input.trim()} aria-label="Send message">
+                  <Send className="h-5 w-5" aria-hidden="true" />
+                </button>
+              </div>
             </form>
           </Card>
         </div>

@@ -34,7 +34,10 @@ export async function apiDelete(endpoint: string, ids: string[]): Promise<boolea
 }
 
 export async function apiPost(endpoint: string, data: any): Promise<boolean> {
-  if (!hasAuthToken()) return false;
+  // Registration is intentionally public. All other application writes still
+  // require a session token before they are sent to the backend.
+  const isPublicAuthEndpoint = endpoint === '/api/auth' || endpoint === '/api/auth/register';
+  if (!isPublicAuthEndpoint && !hasAuthToken()) return false;
   try {
     const res = await fetch(`${API_BASE_URL}${endpoint}`, {
       method: 'POST',

@@ -138,9 +138,11 @@ export type ChatMessage = {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  materialAnswer?: string;
+  aiAnswer?: string;
   sources?: { doc: string; page: number; excerpt: string }[];
   sourceType?: 'document' | 'general';
-  attachments?: { id: string; name: string }[];
+  attachments?: { id: string; name: string; status?: 'indexing' | 'ready' }[];
   timestamp: string;
 };
 

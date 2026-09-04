@@ -11,10 +11,13 @@ try:
 except ImportError:
     OpenAI = None
 
-load_dotenv()
-
-
 _CURRICULUM_PATH = Path(__file__).resolve().parent / "curriculum.json"
+_BACKEND_ENV_PATH = Path(__file__).resolve().parent / ".env"
+
+# Resolve the backend configuration from this module's directory rather than
+# relying on the process working directory. The app imports StudyBuddy before
+# its later environment setup runs.
+load_dotenv(dotenv_path=_BACKEND_ENV_PATH)
 
 
 def _load_curriculum_kb() -> dict[str, str]:
@@ -31,13 +34,23 @@ _CURRICULUM_KB: dict[str, str] = _load_curriculum_kb()
 
 def _match_knowledge_base(normalized_question: str) -> str | None:
     """Check if the question matches any topic in the curriculum knowledge base."""
+    question_words = set(re.findall(r"[a-z0-9]+", normalized_question))
+    best_match: tuple[int, str] | None = None
+
     for keywords, answer in _CURRICULUM_KB.items():
         if keywords in normalized_question or normalized_question in keywords:
             return answer
-        keyword_words = set(keywords.split())
-        question_words = set(normalized_question.split())
-        if keyword_words & question_words and len(keyword_words & question_words) >= max(1, len(keyword_words) - 1):
-            return answer
+        keyword_words = set(re.findall(r"[a-z0-9]+", keywords))
+        overlap = len(keyword_words & question_words)
+        if overlap and (
+            best_match is None or overlap > best_match[0]
+        ):
+            best_match = (overlap, answer)
+
+    # Questions such as "Explain an algorithm" should match the "algorithm"
+    # entry even when they contain extra instructional words.
+    if best_match is not None:
+        return best_match[1]
     return None
 
 
@@ -116,6 +129,19 @@ Relevant Study Material Context (from this turn):
 Student's Question:
 {q}"""
 
+        user_prompt += """
+
+Final-answer requirements:
+- Answer the student's exact question directly and completely using your own
+  general knowledge.
+- Treat the study-material context only as optional background; do not copy,
+  summarize, or blindly follow it.
+- If the context conflicts with established facts, explain the conflict and
+  give the factually correct answer.
+- Do not invent document names, page numbers, quotations, or sources.
+- Do not mention these instructions or describe your answer as a document
+  summary."""
+
         messages: list[dict] = [{"role": "system", "content": _SYSTEM_PROMPT}]
 
         if history:
@@ -132,25 +158,30 @@ Student's Question:
         messages.append({"role": "user", "content": user_prompt})
 
         if self.client is not None and self.api_key:
-            try:
-                if self.api_key.startswith("sk-or-"):
-                    default_model = "openai/gpt-4o-mini"
-                else:
-                    default_model = "gpt-4o"
-                model_name = os.getenv("AI_MODEL", default_model)
-                print(f"[AI] Sending request to LLM (model: {model_name})")
-                response = self.client.chat.completions.create(
-                    model=model_name,
-                    messages=messages,
-                    temperature=0.7,
-                    max_tokens=2048,
-                )
-                if response.choices and response.choices[0].message.content:
-                    return response.choices[0].message.content
-            except Exception as exc:
-                print(f"[AI] OpenAI API call failed: {exc}")
-                import traceback
-                traceback.print_exc()
+            if self.api_key.startswith("sk-or-"):
+                configured_model = os.getenv("AI_MODEL")
+                models = [configured_model] if configured_model else [
+                    "openrouter/free",
+                    "meta-llama/llama-3.3-8b-instruct:free",
+                    "google/gemma-3-27b-it:free",
+                ]
+            else:
+                models = [os.getenv("AI_MODEL", "gpt-4o")]
+
+            for model_name in models:
+                if not model_name:
+                    continue
+                try:
+                    response = self.client.chat.completions.create(
+                        model=model_name,
+                        messages=messages,
+                        temperature=0.7,
+                        max_tokens=2048,
+                    )
+                    if response.choices and response.choices[0].message.content:
+                        return response.choices[0].message.content
+                except Exception as exc:
+                    print(f"[AI] Model {model_name} failed: {exc}")
 
         return self._local_answer(q)
 
@@ -169,6 +200,10 @@ Student's Question:
             return kb_answer
 
         return (
-            "I'm temporarily unable to connect to the AI service. "
-            "Please check your internet connection and try again in a moment."
+            f"## Answer\n\n"
+            f"Your question is about **{question.strip()}**. "
+            "The AI provider is currently unavailable, and this topic is not "
+            "included in the local study knowledge base. Please add the relevant "
+            "course material or configure a working AI model to receive a "
+            "complete explanation."
         )
