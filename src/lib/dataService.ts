@@ -22,6 +22,7 @@ import {
   type Notification,
   type Note,
 } from '@/data/mockData';
+import { normalizeTopic } from '@/lib/utils';
 
 export type { Course, DocumentItem, Quiz, ChatMessage, Notification, Note };
 
@@ -153,6 +154,25 @@ export async function fetchMessages() {
     return data;
   }
   return [];
+}
+
+// ============ MATERIALS (for notes) ============
+
+export async function findMaterialsByTopic(topic: string): Promise<any[]> {
+  const allMaterials = await fetchDocuments();
+  const normalizedTopic = normalizeTopic(topic);
+  
+  const topicParts = normalizedTopic.toLowerCase().split(/[\s\-]+/);
+  
+  return allMaterials.filter((material: any) => {
+    const materialName = (material.name || '').toLowerCase();
+    const materialCourse = (material.course || '').toLowerCase();
+    
+    return topicParts.some(part => 
+      part.length > 2 && 
+      (materialName.includes(part) || materialCourse.includes(part))
+    );
+  });
 }
 
 // ============ NOTES ============

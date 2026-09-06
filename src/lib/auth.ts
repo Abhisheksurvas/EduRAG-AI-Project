@@ -151,6 +151,8 @@ export function clearCurrentAccount() {
   writeStoredSession(null);
   if (typeof window !== 'undefined') {
     window.localStorage.removeItem('edurag-auth-token');
+    // Clear chat history cache to prevent cross-account leakage
+    window.localStorage.removeItem('edurag-chat-history');
   }
 }
 

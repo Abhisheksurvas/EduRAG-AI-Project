@@ -82,7 +82,9 @@ import {
   updateNote,
   deleteNote,
   sendChatMessage,
+  findMaterialsByTopic,
 } from '@/lib/dataService';
+import { normalizeTopic } from '@/lib/utils';
 
 /* =========================================================
    TYPES / HELPERS
@@ -718,9 +720,10 @@ export function StudentCourses() {
             </div>
           </CardBody>
         </Card>
-      </div>
-    );
-  }
+</div>
+    <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+  );
+}
 
   return (
     <div className="space-y-6">
@@ -2163,7 +2166,17 @@ export function StudentNotes() {
   const [uploadedNoteFile, setUploadedNoteFile] = useState<{ id: string; name: string } | null>(null);
   const [noteUploadStatus, setNoteUploadStatus] = useState<string | null>(null);
   const [isUploadingNoteFile, setIsUploadingNoteFile] = useState(false);
+  const [toasts, setToasts] = useState<ToastData[]>([]);
   const noteFileInputRef = useRef<HTMLInputElement>(null);
+
+  const pushToast = useCallback((message: string, tone: ToastData['tone']) => {
+    const id = `note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setToasts(prev => [...prev, { id, message, tone }]);
+  }, []);
+
+  const dismissToast = useCallback((id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -2221,88 +2234,6 @@ export function StudentNotes() {
     },
   ];
 
-  const noteContent: Record<
-    typeof type,
-    { title: string; body: string }
-  > = {
-    summary: {
-      title:
-        'Graph Traversal â€” Chapter Summary',
-
-      body: `This chapter covers fundamental graph traversal techniques.
-
-1. BFS (Breadth-First Search): Uses a queue and explores level by level. Optimal for unweighted shortest paths. Time: O(V+E), Space: O(V).
-
-2. DFS (Depth-First Search): Uses stack/recursion and explores deeply before backtracking. Used for cycle detection, topological sorting, and finding connected components. Time: O(V+E), Space: O(V).
-
-3. Dijkstra's Algorithm: Finds shortest paths in weighted graphs with non-negative weights using a greedy approach with a min-heap. Time: O((V+E) log V).
-
-4. Minimum Spanning Trees: Kruskal's uses union-find and is edge-based, while Prim's is vertex-based and uses a priority queue.`,
-    },
-
-    keypoints: {
-      title: 'Key Points â€” Graph Traversal',
-
-      body: `â€¢ BFS uses a Queue; DFS uses a Stack or recursion
-â€¢ BFS guarantees shortest path in unweighted graphs
-â€¢ DFS is useful for topological sorting and cycle detection
-â€¢ Dijkstra requires non-negative edge weights
-â€¢ Kruskal's algorithm sorts edges and uses Union-Find
-â€¢ Prim's algorithm grows the MST from a starting vertex
-â€¢ BFS space complexity can be O(V)
-â€¢ DFS space complexity can be O(V) in the worst case
-â€¢ A* combines shortest-path search with heuristics
-â€¢ Floyd-Warshall finds all-pairs shortest paths in O(VÂ³)`,
-    },
-
-    definitions: {
-      title:
-        'Important Definitions â€” Graph Traversal',
-
-      body: `Graph: A data structure consisting of vertices (nodes) and edges connecting them.
-
-Adjacent: Two vertices are adjacent if connected by an edge.
-
-Degree: Number of edges incident to a vertex.
-
-Path: A sequence of vertices connected by edges.
-
-Cycle: A path that starts and ends at the same vertex.
-
-Connected Graph: A graph where every pair of vertices is connected by a path.
-
-Tree: A connected acyclic graph with exactly V-1 edges.
-
-Spanning Tree: A subgraph that is a tree and includes all vertices.
-
-Weighted Graph: A graph where each edge has an associated weight or cost.
-
-Directed Graph: A graph where edges have direction.`,
-    },
-
-    formulas: {
-      title:
-        'Formula Sheet â€” Graph Algorithms',
-
-      body: `BFS Time Complexity: O(V + E)
-DFS Time Complexity: O(V + E)
-Dijkstra (Min-Heap): O((V + E) log V)
-Dijkstra (Array): O(VÂ²)
-Bellman-Ford: O(V Ã— E)
-Floyd-Warshall: O(VÂ³)
-Kruskal's MST: O(E log E)
-Prim's MST (Binary Heap): O(E log V)
-Prim's MST (Array): O(VÂ²)
-
-Number of edges in complete graph: n(n-1)/2
-Number of edges in complete bipartite graph: m Ã— n
-Handshaking Lemma: Î£ deg(v) = 2|E|
-
-Maximum edges in a tree: V - 1
-Minimum edges for connectivity: V - 1`,
-    },
-  };
-
   const handleNoteFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -2312,10 +2243,12 @@ Minimum edges for connectivity: V - 1`,
     const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
     if (!allowedExtensions.includes(extension)) {
       setNoteUploadStatus('Upload a PDF, PPTX, DOCX, TXT, MD, or CSV file.');
+      pushToast('Invalid file type. Please upload PDF, PPTX, DOCX, TXT, MD, or CSV.', 'error');
       return;
     }
     if (file.size > 10 * 1024 * 1024) {
       setNoteUploadStatus('This file is larger than 10 MB.');
+      pushToast('File size exceeds 10 MB limit.', 'error');
       return;
     }
 
@@ -2338,9 +2271,12 @@ Minimum edges for connectivity: V - 1`,
       }
       setUploadedNoteFile({ id: data.material.id, name: data.material.name || file.name });
       setNoteUploadStatus('Uploaded and ready to generate notes.');
+      pushToast(`"${file.name}" uploaded successfully. Ready to generate notes.`, 'success');
     } catch (error) {
       setUploadedNoteFile(null);
-      setNoteUploadStatus(error instanceof Error ? error.message : 'The document could not be uploaded.');
+      const msg = error instanceof Error ? error.message : 'The document could not be uploaded.';
+      setNoteUploadStatus(msg);
+      pushToast(msg, 'error');
     } finally {
       setIsUploadingNoteFile(false);
     }
@@ -2463,47 +2399,76 @@ Minimum edges for connectivity: V - 1`,
               </div>
             </div>
 
-            <Button
-              icon={Sparkles}
-              className="w-full"
-              disabled={isGeneratingNote || (!noteTopic.trim() && !uploadedNoteFile)}
-              onClick={async () => {
-                setIsGeneratingNote(true);
-                setNotesError(null);
-                try {
-                  const label = noteTypes.find(item => item.id === type)?.label || 'Smart Notes';
-                  const response = await sendChatMessage({
-                    question: `Create ${label} for ${noteTopic || uploadedNoteFile?.name || 'the uploaded study material'}. Return only the note content, with clear headings and bullet points.`,
-                    topic: noteTopic || uploadedNoteFile?.name || label,
-                    difficulty: 'Medium',
-                    context: uploadedNoteFile ? `Use uploaded document ${uploadedNoteFile.name} as source material.` : '',
-                    selectedMaterialIds: uploadedNoteFile ? [uploadedNoteFile.id] : [],
-                    responseMode: 'ai',
-                  });
-                  const note = {
-                    id: `note_${Date.now()}`,
-                    title: `${label} — ${noteTopic || uploadedNoteFile?.name || 'Study Material'}`,
-                    type,
-                    course: 'Student Study Material',
-                    chapter: noteTopic || uploadedNoteFile?.name || 'General',
-                    content: response.ai_answer || response.answer,
-                    createdAt: new Date().toISOString(),
-                    userId: getCurrentUserId(),
-                  };
-                  if (!await createNote(note)) throw new Error('The note could not be saved.');
-                  setNotes(current => [note, ...current]);
-                  setActiveNote(note);
-                  setNoteDraft(note.content);
-                  setGenerated(true);
-                } catch (error) {
-                  setNotesError(error instanceof Error ? error.message : 'Unable to generate notes.');
-                } finally {
-                  setIsGeneratingNote(false);
-                }
-              }}
-            >
-              {isGeneratingNote ? 'Generating…' : 'Generate Smart Notes'}
-            </Button>
+<Button
+               icon={Sparkles}
+               className="w-full"
+               disabled={isGeneratingNote || (!noteTopic.trim() && !uploadedNoteFile)}
+               onClick={async () => {
+                 setIsGeneratingNote(true);
+                 setNotesError(null);
+                 try {
+                   const label = noteTypes.find(item => item.id === type)?.label || 'Smart Notes';
+                   const rawTopic = noteTopic || uploadedNoteFile?.name || 'Study Material';
+                   const normalizedChapter = normalizeTopic(rawTopic);
+
+                   const matchingMaterials = await findMaterialsByTopic(normalizedChapter);
+
+                   if (matchingMaterials.length === 0 && !uploadedNoteFile) {
+                     setNotesError('No matching study material found');
+                     setIsGeneratingNote(false);
+                     pushToast('No matching study material found for the topic. Please try a different topic or upload relevant study materials.', 'error');
+                     return;
+                   }
+
+                   const materialIds = matchingMaterials.map((m: any) => m.id);
+                   const selectedMaterialIds = uploadedNoteFile
+                     ? [...materialIds, uploadedNoteFile.id]
+                     : materialIds;
+
+                   const response = await sendChatMessage({
+                     question: `Create ${label} for ${normalizedChapter}. Return only the note content, with clear headings and bullet points. Base your answer strictly on the provided study material.`,
+                     topic: normalizedChapter,
+                     difficulty: 'Medium',
+                     context: uploadedNoteFile ? `Use uploaded document ${uploadedNoteFile.name} as source material.` : '',
+                     selectedMaterialIds,
+                     responseMode: 'materials',
+                   });
+
+                   const answerText = response.material_answer || response.answer || '';
+
+                   if (!answerText.trim()) {
+                     setNotesError('No matching study material found');
+                     setIsGeneratingNote(false);
+                     pushToast('Could not generate notes from the provided materials. Please check if the materials contain relevant information.', 'error');
+                     return;
+                   }
+
+                   const note = {
+                     id: `note_${Date.now()}`,
+                     title: `${label} — ${normalizedChapter}`,
+                     type,
+                     course: 'Student Study Material',
+                     chapter: normalizedChapter,
+                     content: answerText,
+                     createdAt: new Date().toISOString(),
+                     userId: getCurrentUserId(),
+                   };
+                   if (!await createNote(note)) throw new Error('The note could not be saved.');
+                   setNotes(current => [note, ...current]);
+                   setActiveNote(note);
+                   setNoteDraft(note.content);
+                   setGenerated(true);
+                   pushToast(`"${label} — ${normalizedChapter}" note generated successfully!`, 'success');
+                 } catch (error) {
+                   setNotesError(error instanceof Error ? error.message : 'Unable to generate notes.');
+                   pushToast(error instanceof Error ? error.message : 'Failed to generate notes. Please try again.', 'error');
+                 } finally {
+                   setIsGeneratingNote(false);
+                 }
+               }}
+             >
+               {isGeneratingNote ? 'Generating…' : 'Generate Smart Notes'}
+             </Button>
             {notesError && <p className="text-xs text-error-600">{notesError}</p>}
           </CardBody>
         </Card>
@@ -2516,7 +2481,7 @@ Minimum edges for connectivity: V - 1`,
                 <EmptyState
                   icon={StickyNote}
                   title="No notes generated yet"
-                  description="Select a course, document, and note type, then click Generate to create AI-powered study notes."
+                  description="Enter a topic or chapter, then click Generate. Notes are created strictly from your uploaded/teacher-provided study materials."
                 />
               </CardBody>
             </Card>
@@ -2606,25 +2571,25 @@ Minimum edges for connectivity: V - 1`,
                 </div>
               </div>
 
-              <div className="p-6 flex-1 overflow-y-auto">
-                <h2 className="text-xl font-bold font-display text-neutral-900 mb-4">
-                  {activeNote?.title || noteContent[type].title}
-                </h2>
+<div className="p-6 flex-1 overflow-y-auto">
+                 <h2 className="text-xl font-bold font-display text-neutral-900 mb-4">
+                   {activeNote?.title || `${noteTypes.find(item => item.id === type)?.label} — ${noteTopic || uploadedNoteFile?.name || 'Study Material'}`}
+                 </h2>
 
-                <div className="prose prose-sm max-w-none">
-                  {editingNote ? (
-                    <textarea
-                      value={noteDraft}
-                      onChange={event => setNoteDraft(event.target.value)}
-                      className="w-full min-h-80 rounded-xl border border-neutral-200 p-4 text-sm text-neutral-700 outline-none focus:border-primary-400"
-                    />
-                  ) : (
-                    <pre className="whitespace-pre-wrap font-sans text-sm text-neutral-700 leading-relaxed">
-                      {activeNote?.content || noteContent[type].body}
-                    </pre>
-                  )}
-                </div>
-              </div>
+                 <div className="prose prose-sm max-w-none">
+                   {editingNote ? (
+                     <textarea
+                       value={noteDraft}
+                       onChange={event => setNoteDraft(event.target.value)}
+                       className="w-full min-h-80 rounded-xl border border-neutral-200 p-4 text-sm text-neutral-700 outline-none focus:border-primary-400"
+                     />
+                   ) : (
+                     <pre className="whitespace-pre-wrap font-sans text-sm text-neutral-700 leading-relaxed">
+                       {activeNote?.content || ''}
+                     </pre>
+                   )}
+                 </div>
+               </div>
             </Card>
           )}
         </div>

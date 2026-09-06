@@ -51,67 +51,52 @@ export function getCurrentUserRole(): 'student' {
 
 /**
  * Load all conversations for the current user from the backend (MongoDB).
- * Falls back to localStorage if the backend is unavailable.
+ * If the backend returns no data (e.g. not authenticated), the local cache
+ * is ignored entirely to prevent leaking history from a different account
+ * or from a previous session.
  */
 export async function loadConversations(): Promise<ChatConversation[]> {
-  const userId = getCurrentUserId();
-  const role = getCurrentUserRole();
-
   let backendConversations: ChatConversation[] = [];
+  let backendSucceeded = false;
   try {
     const data = await apiGet<{ success: boolean; conversations: ChatConversation[] }>(
-      `/api/chat/history?userId=${encodeURIComponent(userId)}&role=${encodeURIComponent(role)}`
+      '/api/chat/history'
     );
     if (data && data.success && Array.isArray(data.conversations)) {
       backendConversations = deduplicateConversations(data.conversations);
+      backendSucceeded = true;
     }
   } catch (err) {
-    console.warn('[ChatHistory] Failed to load from backend, using localStorage:', err);
+    console.warn('[ChatHistory] Failed to load from backend:', err);
   }
 
-  // Load the local cache (this is the only persistent store for sessions that
-  // have no backend JWT, e.g. demo accounts whose writes never reach MongoDB).
-  let localConversations: ChatConversation[] = [];
-  try {
-    const stored = window.localStorage.getItem(CHAT_HISTORY_STORAGE_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored) as ChatConversation[];
-      if (Array.isArray(parsed)) {
-        localConversations = deduplicateConversations(parsed);
-      }
-    }
-  } catch {
-    // ignore
+  // If the backend call did not return a success response, do NOT fall back
+  // to localStorage — that would leak history from a different user or from
+  // a previous session. Return only what the backend confirmed belongs to
+  // this account.
+  if (!backendSucceeded) {
+    return [];
   }
 
-  // Merge backend + local by conversationId. Backend entries win on conflict,
-  // but local-only conversations are always preserved — an empty (or failed)
-  // backend response must NEVER wipe history that only exists locally.
-  const byId = new Map<string, ChatConversation>();
-  for (const conv of localConversations) {
-    if (conv.conversationId) byId.set(conv.conversationId, conv);
-  }
-  for (const conv of backendConversations) {
-    if (conv.conversationId) byId.set(conv.conversationId, conv);
-  }
-  const merged = Array.from(byId.values());
-
-  // Only rewrite the cache when we actually have something to store, so we
-  // never replace a populated cache with an empty one.
-  if (merged.length > 0) {
-    window.localStorage.setItem(CHAT_HISTORY_STORAGE_KEY, JSON.stringify(merged));
-  }
-  return merged;
+  // Backend returned a success response. It's authoritative for the current
+  // authenticated user. Replace the local cache with this exact set so the
+  // cache never contains stale data from another account.
+  window.localStorage.setItem(CHAT_HISTORY_STORAGE_KEY, JSON.stringify(backendConversations));
+  return backendConversations;
 }
 
 /**
  * Save a conversation to the backend (MongoDB) and localStorage cache.
  */
 export async function saveConversation(conversation: ChatConversation): Promise<ChatConversation> {
+  // Ensure the conversation has the current user's ID
+  const currentUserId = getCurrentUserId();
+  const currentRole = getCurrentUserRole();
+  
   const payload = {
     conversationId: conversation.conversationId,
-    userId: conversation.userId,
-    role: conversation.role,
+    userId: currentUserId,
+    role: currentRole,
     title: conversation.title,
     messages: conversation.messages,
     updatedAt: conversation.updatedAt,

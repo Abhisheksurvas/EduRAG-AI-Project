@@ -194,6 +194,7 @@ memory_store: dict = {
     "recent_activity": [],
     "quiz_questions": [],
     "quiz_results": [],
+    "student_signups": [],
 }
 
 # ---------------------------------------------------------------------------
@@ -422,7 +423,28 @@ def sync_profile_for_account(body: dict) -> None:
                 print(f"[MongoDB] Synced student record for '{email}' linked to userId '{user_id}'")
             except Exception as exc:
                 print(f"[MongoDB] Student sync failed: {exc}")
+            try:
+                signup_doc = {
+                    "userId": user_id,
+                    "name": body.get("name"),
+                    "email": email,
+                    "role": role,
+                    "details": body.get("details") or {},
+                    "createdAt": body.get("createdAt") or datetime.now(timezone.utc).isoformat(),
+                }
+                mongo_db["student_signups"].insert_one(signup_doc)
+                print(f"[MongoDB] Recorded student signup for '{email}'")
+            except Exception as exc:
+                print(f"[MongoDB] Student signup insert failed: {exc}")
         _upsert_memory(memory_store, "students", student_record, user_id, email)
+        _upsert_memory(memory_store, "student_signups", {
+            "userId": user_id,
+            "name": body.get("name"),
+            "email": email,
+            "role": role,
+            "details": body.get("details") or {},
+            "createdAt": body.get("createdAt") or datetime.now(timezone.utc).isoformat(),
+        }, user_id, email)
 
     if mongo_db is not None:
         try:
@@ -745,21 +767,23 @@ class EduRAGHandler(BaseHTTPRequestHandler):
         # ---- chat history ----
         if path == "/api/chat/history":
             payload = self._optional_auth()
-            token_uid = payload.get("sub", "") if payload else ""
-            role = payload.get("role", "") if payload else ""
-            req_uid = query_params.get("userId", [token_uid or ""])[0] or token_uid
-            if role == "student" and token_uid and req_uid != token_uid:
-                self._write_json({"error": "Access denied."}, status_code=HTTPStatus.FORBIDDEN)
+            if payload is None:
+                self._write_json({"error": "Authentication required."}, status_code=HTTPStatus.UNAUTHORIZED)
                 return
-            conversations = get_chat_conversations(req_uid, role)
+            token_uid = payload.get("sub", "")
+            role = payload.get("role", "")
+            conversations = get_chat_conversations(token_uid, role)
             self._write_json({"success": True, "conversations": conversations})
             return
 
         # ---- single chat conversation ----
         if path.startswith("/api/chat/history/") and path.count("/") >= 4:
             payload = self._optional_auth()
-            uid = payload.get("sub", "") if payload else ""
-            role = payload.get("role", "") if payload else ""
+            if payload is None:
+                self._write_json({"error": "Authentication required."}, status_code=HTTPStatus.UNAUTHORIZED)
+                return
+            uid = payload.get("sub", "")
+            role = payload.get("role", "")
             conversation_id = path.rsplit("/", 1)[-1]
             convs = get_chat_conversations(uid, role) if uid else []
             conv = next((c for c in convs if c.get("conversationId") == conversation_id), None)
@@ -866,7 +890,32 @@ class EduRAGHandler(BaseHTTPRequestHandler):
             payload = self._require_auth()
             if payload is None:
                 return
-            self._write_json(load_many("notes", []))
+            user_id = payload.get("sub", "")
+            self._write_json(load_many("notes", [], {"userId": user_id}))
+            return
+
+        # ---- notes POST ----
+        if path == "/api/notes" and self.command == "POST":
+            payload = self._require_auth()
+            if payload is None:
+                return
+            body = self._read_json_body()
+            if not isinstance(body, dict):
+                self._write_json({"error": "Invalid notes payload"}, status_code=HTTPStatus.BAD_REQUEST)
+                return
+            user_id = payload.get("sub", "")
+            body["userId"] = user_id
+            body["id"] = body.get("id") or str(uuid.uuid4())
+            body["createdAt"] = body.get("createdAt") or datetime.now(timezone.utc).isoformat()
+
+            if mongo_db is not None:
+                try:
+                    mongo_db["notes"].insert_one(dict(body))
+                except Exception as exc:
+                    print(f"[MongoDB] Notes insert failed: {exc}")
+
+            memory_store["notes"].append(dict(body))
+            self._write_json({"success": True, "item": body}, status_code=HTTPStatus.CREATED)
             return
 
         # ---- stats ----
@@ -1159,12 +1208,16 @@ class EduRAGHandler(BaseHTTPRequestHandler):
         # ---- chat history save ----
         if path == "/api/chat/history":
             payload = self._optional_auth()
+            if payload is None:
+                self._write_json({"error": "Authentication required."}, status_code=HTTPStatus.UNAUTHORIZED)
+                return
             body = self._read_json_body()
             if not isinstance(body, dict):
                 self._write_json({"error": "Invalid chat history payload"}, status_code=HTTPStatus.BAD_REQUEST)
                 return
-            # Enforce userId matches token when a token is present; else trust the body
-            body["userId"] = (payload.get("sub") if payload else "") or body.get("userId", "")
+            # Always use the token's userId; never trust body userId
+            body["userId"] = payload.get("sub", "")
+            body["role"] = payload.get("role", "student")
             conversation = save_chat_conversation(body)
             self._write_json({"success": True, "conversation": conversation}, status_code=HTTPStatus.CREATED)
             return
@@ -1262,13 +1315,50 @@ class EduRAGHandler(BaseHTTPRequestHandler):
             self._write_json({"success": ok})
             return
 
+        # ---- notes deletion (protected, user-specific) ----
+        if path == "/api/notes":
+            payload = self._require_auth()
+            if payload is None:
+                return
+            user_id = payload.get("sub", "")
+            body = self._read_json_body() or {}
+            ids = body.get("ids", []) if isinstance(body, dict) else []
+
+            deleted_count = 0
+            if mongo_db is not None and ids:
+                try:
+                    res = mongo_db["notes"].delete_many({
+                        "id": {"$in": ids},
+                        "userId": user_id,
+                    })
+                    deleted_count = res.deleted_count
+                    print(f"[MongoDB] Deleted {deleted_count} notes for user '{user_id}'")
+                except Exception as exc:
+                    print(f"[MongoDB] Notes delete failed: {exc}")
+
+            if "notes" in memory_store and ids:
+                original_len = len(memory_store["notes"])
+                memory_store["notes"] = [
+                    item for item in memory_store["notes"]
+                    if not (item.get("id") in ids and item.get("userId") == user_id)
+                ]
+                if mongo_db is None:
+                    deleted_count = original_len - len(memory_store["notes"])
+
+            self._write_json({
+                "success": True,
+                "collection": "notes",
+                "deletedCount": deleted_count,
+                "ids": ids,
+            })
+            return
+
         # ---- chat history deletion (per conversation) ----
         if path.startswith("/api/chat/history/") and path.count("/") >= 4:
             payload = self._optional_auth()
-            uid = (payload.get("sub") if payload else "") or ""
-            if not uid:
-                _body = self._read_json_body() or {}
-                uid = str(_body.get("userId", "") or "")
+            if payload is None:
+                return
+            uid = payload.get("sub", "")
             conversation_id = path.rsplit("/", 1)[-1]
             if not conversation_id:
                 self._write_json({"error": "conversationId required"}, status_code=HTTPStatus.BAD_REQUEST)
@@ -1348,6 +1438,10 @@ class EduRAGHandler(BaseHTTPRequestHandler):
             self._write_json({"error": "Invalid collection endpoint"}, status_code=HTTPStatus.BAD_REQUEST)
             return
 
+        # Ensure user-scoped ownership for notes updates
+        if collection_name == "notes":
+            body["userId"] = payload.get("sub", "") or body.get("userId", "")
+
         item_id = body.get("id") or body.get("rollNo") or body.get("code") or body.get("role")
         email = body.get("email")
         role_field = body.get("role")
@@ -1371,6 +1465,11 @@ class EduRAGHandler(BaseHTTPRequestHandler):
                 is_match = False
                 if collection_name == "accounts":
                     is_match = item.get("email") == email and item.get("role") == role_field
+                elif collection_name == "notes":
+                    is_match = (
+                        item.get("id") == body.get("id") 
+                        and item.get("userId") == payload.get("sub", "")
+                    )
                 else:
                     is_match = (
                         (item.get("id") and item.get("id") == body.get("id"))
