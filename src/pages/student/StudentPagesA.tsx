@@ -721,7 +721,6 @@ export function StudentCourses() {
           </CardBody>
         </Card>
 </div>
-    <ToastContainer toasts={toasts} onDismiss={dismissToast} />
   );
 }
 
