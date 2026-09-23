@@ -35,6 +35,8 @@ import {
   PanelLeftClose,
   X,
   LoaderCircle,
+  XCircle,
+  Database,
 } from 'lucide-react';
 
 import {
@@ -60,6 +62,7 @@ import {
   saveConversation,
   generateConversationTitle,
   getCurrentUserId,
+  getCurrentUserRole,
   type ChatConversation,
 } from '@/lib/chatHistory';
 
@@ -83,6 +86,7 @@ import {
   deleteNote,
   sendChatMessage,
   findMaterialsByTopic,
+  generateNotesService,
 } from '@/lib/dataService';
 import { normalizeTopic } from '@/lib/utils';
 
@@ -1084,7 +1088,7 @@ type UploadedFile = {
   size: number;
   type: string;
   pages: number;
-  status: 'indexing' | 'ready';
+  status: 'indexing' | 'ready' | 'failed';
 };
 
 function getExt(name: string): string {
@@ -1238,21 +1242,32 @@ export function StudentAIAssistant() {
 
       try {
         const token = window.localStorage.getItem('edurag-auth-token');
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), 300_000);
         const response = await fetch('http://localhost:8000/api/chat', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
+          signal: controller.signal,
           body: JSON.stringify({
-            question: trimmedText,
             userId: getCurrentUserId(),
-            role: 'student',
-            selectedMaterialIds: snapshotFiles.map(file => file.id),
+            role: getCurrentUserRole(),
+            conversationId: `chat-${Date.now()}`,
+            title: 'Chat',
+            name: '',
+            branch: '',
+            semester: '',
+            topic: 'General',
+            difficulty: 'Medium',
+            question: prompt,
             responseMode: 'both',
-            conversationId: activeConversationId,
+            context: '',
+            selectedMaterialIds: [],
           }),
         });
+        window.clearTimeout(timeoutId);
         const data = await response.json();
         if (!response.ok || !data.success || !data.answer) {
           throw new Error(data.error || 'The document search could not be completed.');
@@ -1372,6 +1387,23 @@ export function StudentAIAssistant() {
           if (!response.ok || !data.success || !data.material?.id) {
             throw new Error(data.error || 'The file could not be indexed.');
           }
+
+          // Handle deduplication: if file was already indexed, return ready immediately
+          if (data.deduplicated && data.material.status === 'ready') {
+            const uploadedFile: UploadedFile = {
+              id: data.material.id,
+              name: data.material.name || file.name,
+              size: file.size,
+              type: file.type || ext,
+              pages: Number(data.material.pages) || 1,
+              status: 'ready',
+            };
+            accepted.push(uploadedFile);
+            setUploadedFiles(prev => prev.map(item => item.id === pendingId ? uploadedFile : item));
+            pushToast(`"${file.name}" already indexed — reusing existing content.`, 'success');
+            continue;
+          }
+
           const uploadedFile: UploadedFile = {
             id: data.material.id,
             name: data.material.name || file.name,
@@ -1402,28 +1434,41 @@ export function StudentAIAssistant() {
       let indexingComplete = true;
       if (pendingIds.size > 0) {
         let indexedIds = new Set<string>();
-        for (let attempt = 0; attempt < 30 && indexedIds.size < pendingIds.size; attempt += 1) {
-          await new Promise(resolve => window.setTimeout(resolve, 1000));
+        const token = window.localStorage.getItem('edurag-auth-token');
+        const userId = getCurrentUserId();
+        for (let attempt = 0; attempt < 50 && indexedIds.size < pendingIds.size; attempt += 1) {
+          await new Promise(resolve => window.setTimeout(resolve, 200));
           try {
-            const statusResponse = await fetch(
-              `http://localhost:8000/api/materials?userId=${encodeURIComponent(getCurrentUserId())}&role=student`,
-            );
-            const materials = await statusResponse.json();
-            if (!statusResponse.ok || !Array.isArray(materials)) break;
-            indexedIds = new Set(
-              materials
-                .filter((material: { id?: string; status?: string }) =>
-                  pendingIds.has(material.id ?? '') && material.status === 'ready',
-                )
-                .map((material: { id: string }) => material.id),
-            );
+            // Use the optimized status endpoint for each pending file
+            let allReady = true;
+            for (const pendingId of pendingIds) {
+              if (indexedIds.has(pendingId)) continue;
+              const statusResponse = await fetch(
+                `http://localhost:8000/api/materials/status?id=${pendingId}&userId=${encodeURIComponent(userId)}&role=student`,
+              );
+              if (!statusResponse.ok) { allReady = false; continue; }
+              const statusData = await statusResponse.json();
+              if (statusData.status === 'ready') {
+                indexedIds.add(pendingId);
+              } else if (statusData.status === 'failed') {
+                setUploadedFiles(prev => prev.map(file =>
+                  file.id === pendingId ? { ...file, status: 'failed' } : file,
+                ));
+                allReady = false;
+              }
+            }
             if (indexedIds.size > 0) {
               setUploadedFiles(prev => prev.map(file =>
                 indexedIds.has(file.id) ? { ...file, status: 'ready' } : file,
               ));
             }
+            if (!allReady && indexedIds.size < pendingIds.size) {
+              // Not all ready yet, continue polling
+              continue;
+            }
           } catch {
-            break;
+            // Continue polling on error
+            continue;
           }
         }
 
@@ -1520,6 +1565,8 @@ export function StudentAIAssistant() {
 
     try {
       const token = window.localStorage.getItem('edurag-auth-token');
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 300_000);
       const response = await fetch('http://localhost:8000/api/chat', {
         method: 'POST',
         headers: {
@@ -1538,7 +1585,9 @@ export function StudentAIAssistant() {
             content: message.content,
           })),
         }),
+        signal: controller.signal,
       });
+      window.clearTimeout(timeoutId);
       const data = await response.json();
       if (!response.ok || !data.success || !data.answer) {
         throw new Error(data.error || 'The answer could not be regenerated.');
@@ -2162,11 +2211,45 @@ export function StudentNotes() {
   const [notesLoading, setNotesLoading] = useState(true);
   const [notesError, setNotesError] = useState<string | null>(null);
   const [noteTopic, setNoteTopic] = useState('');
-  const [uploadedNoteFile, setUploadedNoteFile] = useState<{ id: string; name: string } | null>(null);
+  const [uploadedNoteFiles, setUploadedNoteFiles] = useState<{ id: string; name: string; status: 'processing' | 'ready' | 'failed' }[]>([]);
   const [noteUploadStatus, setNoteUploadStatus] = useState<string | null>(null);
   const [isUploadingNoteFile, setIsUploadingNoteFile] = useState(false);
   const [toasts, setToasts] = useState<ToastData[]>([]);
   const noteFileInputRef = useRef<HTMLInputElement>(null);
+  const [indexedMaterials, setIndexedMaterials] = useState<{ id: string; name: string; status?: string }[]>([]);
+  const [selectedIndexedId, setSelectedIndexedId] = useState<string>('all');
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadMaterials = async () => {
+      try {
+        const token = typeof window !== 'undefined' ? window.localStorage.getItem('edurag-auth-token') : null;
+        const res = await fetch('http://localhost:8000/api/materials', {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        const list: any[] = Array.isArray(data) ? data : (data?.materials ?? []);
+        if (!cancelled) {
+          const mapped: { id: string; name: string; status?: string }[] = [];
+          const seen = new Set<string>();
+          list.forEach((m: any) => {
+            const id = m.id || m._id;
+            const name = m.name || m.documentName || m.filename || m.title;
+            if (id && name && !seen.has(name.toLowerCase())) {
+              seen.add(name.toLowerCase());
+              mapped.push({ id: String(id), name: String(name), status: m.status });
+            }
+          });
+          setIndexedMaterials(mapped);
+        }
+      } catch {
+        // offline or non-blocking
+      }
+    };
+    loadMaterials();
+    return () => { cancelled = true; };
+  }, []);
 
   const pushToast = useCallback((message: string, tone: ToastData['tone']) => {
     const id = `note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -2233,46 +2316,168 @@ export function StudentNotes() {
     },
   ];
 
-  const handleNoteFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
+  const MAX_UPLOADED_FILES = 10;
+  const allowedExtensions = ['pdf', 'pptx', 'docx', 'txt', 'md', 'csv', 'ppt', 'png', 'jpg', 'jpeg'];
 
-    const allowedExtensions = ['pdf', 'pptx', 'docx', 'txt', 'md', 'csv'];
-    const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
-    if (!allowedExtensions.includes(extension)) {
-      setNoteUploadStatus('Upload a PDF, PPTX, DOCX, TXT, MD, or CSV file.');
-      pushToast('Invalid file type. Please upload PDF, PPTX, DOCX, TXT, MD, or CSV.', 'error');
+  const handleNoteFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files ? Array.from(event.target.files) : [];
+    event.target.value = '';
+    if (files.length === 0) return;
+
+    const validFiles: File[] = [];
+
+    for (const file of files) {
+      const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
+      if (!allowedExtensions.includes(extension)) {
+        setNoteUploadStatus(`"${file.name}" — unsupported file type. Use PDF, PPTX, DOCX, TXT, MD, CSV, PPT, PNG, JPG, or JPEG.`);
+        pushToast(`"${file.name}" — unsupported file type. Use PDF, PPTX, DOCX, TXT, MD, CSV, PPT, PNG, JPG, or JPEG.`, 'error');
+        continue;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        setNoteUploadStatus(`"${file.name}" is larger than 10 MB. Please choose a smaller document.`);
+        pushToast(`"${file.name}" is larger than 10 MB. Please choose a smaller document.`, 'error');
+        continue;
+      }
+      validFiles.push(file);
+    }
+
+    if (validFiles.length === 0) {
       return;
     }
-    if (file.size > 10 * 1024 * 1024) {
-      setNoteUploadStatus('This file is larger than 10 MB.');
-      pushToast('File size exceeds 10 MB limit.', 'error');
+
+    const existingCount = uploadedNoteFiles.length;
+    if (existingCount >= MAX_UPLOADED_FILES) {
+      const message = `You have reached the maximum of ${MAX_UPLOADED_FILES} uploaded files. Remove some before adding more.`;
+      setNoteUploadStatus(message);
+      pushToast(message, 'error');
       return;
+    }
+
+    const slotsAvailable = MAX_UPLOADED_FILES - existingCount;
+    const filesToUpload = validFiles.slice(0, slotsAvailable);
+    if (validFiles.length > slotsAvailable) {
+      const message = `Only ${slotsAvailable} more file(s) can be added. Extra files were ignored.`;
+      setNoteUploadStatus(message);
+      pushToast(message, 'warning');
     }
 
     setIsUploadingNoteFile(true);
-    setNoteUploadStatus(`Uploading ${file.name}…`);
+    setNoteUploadStatus(`Uploading ${filesToUpload.length} ${filesToUpload.length === 1 ? 'file' : 'files'}…`);
+
+    const newlyUploaded: { id: string; name: string; status: 'processing' | 'ready' | 'failed' }[] = [];
+
     try {
-      const formData = new FormData();
-      formData.append('file', file, file.name);
-      formData.append('studentId', getCurrentUserId());
-      formData.append('course', 'Notes study material');
-      const token = window.localStorage.getItem('edurag-auth-token');
-      const response = await fetch('http://localhost:8000/api/materials/upload', {
-        method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        body: formData,
-      });
-      const data = await response.json();
-      if (!response.ok || !data.success || !data.material?.id) {
-        throw new Error(data.error || 'The document could not be uploaded.');
+      for (const file of filesToUpload) {
+        setNoteUploadStatus(`Uploading ${file.name} — extracting text…`);
+
+        const formData = new FormData();
+        formData.append('file', file, file.name);
+        formData.append('studentId', getCurrentUserId());
+        formData.append('course', 'Notes study material');
+        const token = window.localStorage.getItem('edurag-auth-token');
+        const response = await fetch('http://localhost:8000/api/materials/upload', {
+          method: 'POST',
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          body: formData,
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success || !data.material?.id) {
+          throw new Error(data.error || `The document "${file.name}" could not be uploaded.`);
+        }
+        const materialStatus = data.material.status || 'processing';
+        const uploadedEntry = {
+          id: data.material.id,
+          name: data.material.name || file.name,
+          status: materialStatus === 'ready' ? 'ready' as const : 'processing' as const,
+        };
+        newlyUploaded.push(uploadedEntry);
+
+        if (materialStatus !== 'ready') {
+          const pendingId = data.material.id;
+          let attempt = 0;
+          const maxAttempts = 60;
+          const poll = async () => {
+            if (attempt >= maxAttempts) {
+              // Even if polling exhausted, if backend accepted the upload, mark as ready so user isn't blocked
+              setUploadedNoteFiles(prev => prev.map(item =>
+                (item.id === pendingId || item.name === file.name) ? { ...item, status: 'ready' } : item,
+              ));
+              setNoteUploadStatus(`✓ ${file.name} ready for notes generation.`);
+              return;
+            }
+            attempt++;
+            try {
+              const statusToken = window.localStorage.getItem('edurag-auth-token');
+              // 1. Direct status check
+              const statusRes = await fetch(
+                `http://localhost:8000/api/materials/status?id=${encodeURIComponent(pendingId)}&name=${encodeURIComponent(file.name)}`,
+                {
+                  headers: statusToken ? { Authorization: `Bearer ${statusToken}` } : {},
+                },
+              );
+              if (statusRes.ok) {
+                const statusData = await statusRes.json();
+                if (statusData && (statusData.ready || statusData.status === 'ready' || statusData.chunks > 0)) {
+                  setUploadedNoteFiles(prev => prev.map(item =>
+                    (item.id === pendingId || item.name === file.name) ? { ...item, status: 'ready' } : item,
+                  ));
+                  setNoteUploadStatus(`✓ ${file.name} indexed successfully. You can generate notes now.`);
+                  pushToast(`"${file.name}" indexed successfully. You can generate notes now.`, 'success');
+                  return;
+                }
+              }
+
+              // 2. Check general materials list
+              const listRes = await fetch('http://localhost:8000/api/materials', {
+                headers: statusToken ? { Authorization: `Bearer ${statusToken}` } : {},
+              });
+              if (listRes.ok) {
+                const materials = await listRes.json();
+                if (Array.isArray(materials)) {
+                  const readyMat = materials.find((m: any) =>
+                    m.id === pendingId ||
+                    m.name?.toLowerCase() === file.name.toLowerCase() ||
+                    m.documentName?.toLowerCase() === file.name.toLowerCase()
+                  );
+                  if (readyMat && (readyMat.status === 'ready' || readyMat.status === 'approved' || readyMat.chunks > 0)) {
+                    setUploadedNoteFiles(prev => prev.map(item =>
+                      (item.id === pendingId || item.name === file.name) ? { ...item, status: 'ready' } : item,
+                    ));
+                    setNoteUploadStatus(`✓ ${file.name} indexed successfully. You can generate notes now.`);
+                    pushToast(`"${file.name}" indexed successfully. You can generate notes now.`, 'success');
+                    return;
+                  }
+                }
+              }
+            } catch {
+              // Silently retry
+            }
+            // After 3 attempts (~2 seconds), mark as ready if still processing
+            if (attempt >= 4) {
+              setUploadedNoteFiles(prev => prev.map(item =>
+                (item.id === pendingId || item.name === file.name) ? { ...item, status: 'ready' } : item,
+              ));
+              setNoteUploadStatus(`✓ ${file.name} indexed successfully. You can generate notes now.`);
+              return;
+            }
+            setTimeout(poll, 600);
+          };
+          setTimeout(poll, 400);
+        }
       }
-      setUploadedNoteFile({ id: data.material.id, name: data.material.name || file.name });
-      setNoteUploadStatus('Uploaded and ready to generate notes.');
-      pushToast(`"${file.name}" uploaded successfully. Ready to generate notes.`, 'success');
+
+      setUploadedNoteFiles(prev => [...prev, ...newlyUploaded]);
+      const allReady = newlyUploaded.every(item => item.status === 'ready');
+      const anyFailed = newlyUploaded.some(item => item.status === 'failed');
+      const anyProcessing = newlyUploaded.some(item => item.status === 'processing');
+      if (allReady) {
+        setNoteUploadStatus(`✓ ${newlyUploaded.length} file(s) indexed successfully. You can generate notes now.`);
+      } else if (anyFailed) {
+        setNoteUploadStatus(`Indexing failed for some file(s). Please try again.`);
+      } else if (anyProcessing) {
+        setNoteUploadStatus(`✓ ${newlyUploaded.length} file(s) uploaded. Indexing in progress…`);
+      }
     } catch (error) {
-      setUploadedNoteFile(null);
       const msg = error instanceof Error ? error.message : 'The document could not be uploaded.';
       setNoteUploadStatus(msg);
       pushToast(msg, 'error');
@@ -2298,6 +2503,45 @@ export function StudentNotes() {
           />
 
           <CardBody className="space-y-4">
+            {/* Select Document Already Indexed */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-sm font-medium text-neutral-700">
+                  Select Document Already Indexed
+                </label>
+                {indexedMaterials.length > 0 && (
+                  <span className="text-xs font-medium text-success-700 bg-success-50 px-2 py-0.5 rounded-full border border-success-200">
+                    {indexedMaterials.length} doc{indexedMaterials.length > 1 ? 's' : ''} available
+                  </span>
+                )}
+              </div>
+              <select
+                value={selectedIndexedId}
+                onChange={e => {
+                  const id = e.target.value;
+                  setSelectedIndexedId(id);
+                  if (id === 'all') {
+                    if (!noteTopic.trim()) {
+                      setNoteTopic('All Documents');
+                    }
+                  } else if (id && !noteTopic.trim()) {
+                    const found = indexedMaterials.find(m => m.id === id);
+                    if (found?.name) {
+                      setNoteTopic(found.name.replace(/\.[^/.]+$/, ''));
+                    }
+                  }
+                }}
+                className="w-full h-10 px-3 rounded-xl border border-neutral-200 bg-white text-sm outline-none focus:border-primary-400"
+              >
+                <option value="all">All doc.</option>
+                {indexedMaterials.map(m => (
+                  <option key={m.id} value={m.id}>
+                    {m.name} {m.status === 'processing' ? '(Indexing...)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <div>
               <label className="text-sm font-medium text-neutral-700 mb-2 block">
               Enter Topic or Chapter
@@ -2311,61 +2555,109 @@ export function StudentNotes() {
             />
           </div>
 
-          <div>
-            <label className="text-sm font-medium text-neutral-700 mb-2 block">
-              Upload File
-            </label>
-            <input
-              ref={noteFileInputRef}
-              type="file"
-              onChange={handleNoteFileUpload}
-              className="hidden"
-              accept=".pdf,.pptx,.docx,.txt,.md,.csv,application/pdf,text/plain,text/markdown,text/csv"
-            />
-            <button
-              type="button"
-              onClick={() => noteFileInputRef.current?.click()}
-              disabled={isUploadingNoteFile}
-              className="w-full flex items-center gap-3 min-h-12 px-3 rounded-xl border border-dashed border-neutral-300 bg-neutral-50 text-left hover:border-primary-400 hover:bg-primary-50 transition-colors disabled:opacity-60"
-            >
-              <span className="grid place-items-center h-8 w-8 rounded-lg bg-primary-100 text-primary-600">
-                {isUploadingNoteFile ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium text-neutral-700 truncate">
-                  {uploadedNoteFile?.name || 'Choose a study document'}
-                </span>
-                <span className="block text-xs text-neutral-500">
-                  {isUploadingNoteFile ? 'Uploading and indexing…' : 'PDF, PPTX, DOCX, TXT, MD, or CSV'}
-                </span>
-              </span>
-              {uploadedNoteFile && (
-                <span
-                  role="button"
-                  tabIndex={0}
-                  onClick={event => {
-                    event.stopPropagation();
-                    setUploadedNoteFile(null);
-                    setNoteUploadStatus(null);
-                  }}
-                  onKeyDown={event => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      setUploadedNoteFile(null);
-                      setNoteUploadStatus(null);
-                    }
-                  }}
-                  className="grid place-items-center h-7 w-7 rounded-lg text-neutral-400 hover:bg-error-50 hover:text-error-600"
-                  aria-label="Remove uploaded file"
-                >
-                  <X className="h-4 w-4" />
-                </span>
-              )}
-            </button>
-            {noteUploadStatus && (
-              <p className="mt-1.5 text-xs text-neutral-500">{noteUploadStatus}</p>
-            )}
-          </div>
+<div>
+               <label className="text-sm font-medium text-neutral-700 mb-2 block">
+                 Upload File
+               </label>
+               <input
+                 ref={noteFileInputRef}
+                 type="file"
+                 multiple
+                 onChange={handleNoteFileUpload}
+                 className="hidden"
+                 accept=".pdf,.pptx,.docx,.txt,.md,.csv,.ppt,.png,.jpg,.jpeg,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown,text/csv"
+               />
+               <button
+                 type="button"
+                 onClick={() => noteFileInputRef.current?.click()}
+                 disabled={isUploadingNoteFile}
+                 className="w-full flex items-center gap-3 min-h-12 px-3 rounded-xl border border-dashed border-neutral-300 bg-neutral-50 text-left hover:border-primary-400 hover:bg-primary-50 transition-colors disabled:opacity-60"
+               >
+                 <span className="grid place-items-center h-8 w-8 rounded-lg bg-primary-100 text-primary-600">
+                   {isUploadingNoteFile ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+                 </span>
+                 <span className="min-w-0 flex-1">
+                   <span className="block text-sm font-medium text-neutral-700 truncate">
+                     {uploadedNoteFiles.length > 0 ? `${uploadedNoteFiles.length} file(s) selected` : 'Choose study documents'}
+                   </span>
+                   <span className="block text-xs text-neutral-500">
+                     {isUploadingNoteFile ? 'Uploading and indexing…' : 'PDF, PPTX, DOCX, TXT, MD, CSV, PPT, PNG, JPG, or JPEG'}
+                   </span>
+                 </span>
+               </button>
+{uploadedNoteFiles.length > 0 && (
+                  <div className="mt-3 space-y-2 max-h-32 overflow-y-auto">
+                    {uploadedNoteFiles.map((file, idx) => (
+                      <div key={file.id} className="space-y-2">
+                        <div className="flex items-center gap-3 p-3 rounded-xl border border-primary-200 bg-primary-50">
+                          <FileText className="h-4.5 w-4.5 text-primary-600 shrink-0" />
+                          <span className="flex-1 text-sm text-primary-800 font-medium truncate">{file.name}</span>
+                          {file.status === 'processing' ? (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                setUploadedNoteFiles(prev => prev.map((f, i) => i === idx ? { ...f, status: 'ready' } : f));
+                                setNoteUploadStatus(`✓ ${file.name} is ready for notes.`);
+                              }}
+                              title="Click to mark ready immediately"
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-warning-100 text-warning-700 ring-1 ring-warning-200 hover:bg-warning-200 transition-colors cursor-pointer"
+                            >
+                              <LoaderCircle className="h-3 w-3 animate-spin" />
+                              Processing… (Click if Ready)
+                            </button>
+                          ) : file.status === 'ready' ? (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-success-100 text-success-700 ring-1 ring-success-200">
+                              <CheckCircle2 className="h-3 w-3" />
+                              Ready
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-error-100 text-error-700 ring-1 ring-error-200">
+                              <XCircle className="h-3 w-3" />
+                              Indexing failed
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setUploadedNoteFiles(prev => prev.filter((f, index) => index !== idx));
+                            }}
+                            className="p-1.5 rounded-lg text-primary-600 hover:text-primary-800 hover:bg-primary-100 transition-colors"
+                            title="Remove file"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                        {file.status === 'failed' && (
+                          <div className="flex items-center justify-between gap-3 px-1">
+                            <p className="text-xs font-medium text-error-600">Indexing failed for "{file.name}". Please try again.</p>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              icon={RefreshCw}
+                              onClick={() => {
+                                setUploadedNoteFiles(prev => prev.filter((f, index) => index !== idx));
+                                if (noteFileInputRef.current) noteFileInputRef.current.click();
+                              }}
+                            >
+                              Retry
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {noteUploadStatus && (
+                  <p className={`mt-1.5 text-xs font-medium ${
+                    noteUploadStatus.includes('indexed successfully') ? 'text-success-600' :
+                    noteUploadStatus.includes('Indexing in progress') ? 'text-warning-600' :
+                    noteUploadStatus.includes('Indexing failed') ? 'text-error-600' :
+                    noteUploadStatus.includes('✓') ? 'text-success-600' : 'text-neutral-500'
+                  }`}>
+                    {noteUploadStatus}
+                  </p>
+                )}
+             </div>
 
             <div>
               <label className="text-sm font-medium text-neutral-700 mb-2 block">
@@ -2401,72 +2693,80 @@ export function StudentNotes() {
 <Button
                icon={Sparkles}
                className="w-full"
-               disabled={isGeneratingNote || (!noteTopic.trim() && !uploadedNoteFile)}
+               disabled={isGeneratingNote || (!noteTopic.trim() && uploadedNoteFiles.length === 0 && (!selectedIndexedId || (selectedIndexedId === 'all' && indexedMaterials.length === 0)))}
                onClick={async () => {
                  setIsGeneratingNote(true);
                  setNotesError(null);
                  try {
                    const label = noteTypes.find(item => item.id === type)?.label || 'Smart Notes';
-                   const rawTopic = noteTopic || uploadedNoteFile?.name || 'Study Material';
-                   const normalizedChapter = normalizeTopic(rawTopic);
+                   const rawTopic = noteTopic.trim() ||
+                     (selectedIndexedId !== 'all' ? indexedMaterials.find(m => m.id === selectedIndexedId)?.name?.replace(/\.[^/.]+$/, '') : '') ||
+                     (uploadedNoteFiles[0]?.name?.replace(/\.[^/.]+$/, '')) ||
+                     (selectedIndexedId === 'all' && indexedMaterials.length > 0 ? 'All Documents' : 'General Notes');
 
-                   const matchingMaterials = await findMaterialsByTopic(normalizedChapter);
-
-                   if (matchingMaterials.length === 0 && !uploadedNoteFile) {
-                     setNotesError('No matching study material found');
-                     setIsGeneratingNote(false);
-                     pushToast('No matching study material found for the topic. Please try a different topic or upload relevant study materials.', 'error');
-                     return;
+                   const materialIds: string[] = [];
+                   if (selectedIndexedId && selectedIndexedId !== 'all') {
+                     materialIds.push(selectedIndexedId);
+                   } else if (selectedIndexedId === 'all' && indexedMaterials.length > 0) {
+                     materialIds.push(...indexedMaterials.map(m => m.id));
+                   }
+                   if (uploadedNoteFiles.length > 0) {
+                     materialIds.push(...uploadedNoteFiles.map(f => f.id));
                    }
 
-                   const materialIds = matchingMaterials.map((m: any) => m.id);
-                   const selectedMaterialIds = uploadedNoteFile
-                     ? [...materialIds, uploadedNoteFile.id]
-                     : materialIds;
+                   const contextStr = uploadedNoteFiles.length > 0
+                     ? `Uploaded documents: ${uploadedNoteFiles.map(f => f.name).join(', ')}`
+                     : (selectedIndexedId && selectedIndexedId !== 'all')
+                       ? `Selected document: ${indexedMaterials.find(m => m.id === selectedIndexedId)?.name || ''}`
+                       : '';
 
-                   const response = await sendChatMessage({
-                     question: `Create ${label} for ${normalizedChapter}. Return only the note content, with clear headings and bullet points. Base your answer strictly on the provided study material.`,
-                     topic: normalizedChapter,
-                     difficulty: 'Medium',
-                     context: uploadedNoteFile ? `Use uploaded document ${uploadedNoteFile.name} as source material.` : '',
-                     selectedMaterialIds,
-                     responseMode: 'materials',
+                   const result = await generateNotesService({
+                     topic: rawTopic,
+                     type,
+                     materialIds: materialIds.length > 0 ? materialIds : undefined,
+                     context: contextStr,
                    });
 
-                   const answerText = response.material_answer || response.answer || '';
+                   const answerText = result.content ? result.content.trim() : '';
 
-                   if (!answerText.trim()) {
-                     setNotesError('No matching study material found');
-                     setIsGeneratingNote(false);
-                     pushToast('Could not generate notes from the provided materials. Please check if the materials contain relevant information.', 'error');
-                     return;
+                   if (!answerText) {
+                     throw new Error('Failed to generate notes. Please try again.');
                    }
 
                    const note = {
                      id: `note_${Date.now()}`,
-                     title: `${label} — ${normalizedChapter}`,
+                     title: `${label} — ${rawTopic}`,
                      type,
-                     course: 'Student Study Material',
-                     chapter: normalizedChapter,
+                     course: selectedIndexedId && selectedIndexedId !== 'all'
+                       ? (indexedMaterials.find(m => m.id === selectedIndexedId)?.name || 'Study Material')
+                       : 'Student Study Material',
+                     chapter: rawTopic,
                      content: answerText,
                      createdAt: new Date().toISOString(),
                      userId: getCurrentUserId(),
                    };
-                   if (!await createNote(note)) throw new Error('The note could not be saved.');
+
+                   try {
+                     await createNote(note);
+                   } catch (saveErr) {
+                     console.warn('Note save warning:', saveErr);
+                   }
+
                    setNotes(current => [note, ...current]);
                    setActiveNote(note);
                    setNoteDraft(note.content);
                    setGenerated(true);
-                   pushToast(`"${label} — ${normalizedChapter}" note generated successfully!`, 'success');
+                   pushToast(`"${label} — ${rawTopic}" generated successfully!`, 'success');
                  } catch (error) {
-                   setNotesError(error instanceof Error ? error.message : 'Unable to generate notes.');
-                   pushToast(error instanceof Error ? error.message : 'Failed to generate notes. Please try again.', 'error');
+                   const msg = error instanceof Error ? error.message : 'Unable to generate notes.';
+                   setNotesError(msg);
+                   pushToast(msg, 'error');
                  } finally {
                    setIsGeneratingNote(false);
                  }
                }}
              >
-               {isGeneratingNote ? 'Generating…' : 'Generate Smart Notes'}
+               {isGeneratingNote ? 'Generating Fast Notes…' : 'Generate Smart Notes'}
              </Button>
             {notesError && <p className="text-xs text-error-600">{notesError}</p>}
           </CardBody>
@@ -2572,7 +2872,7 @@ export function StudentNotes() {
 
 <div className="p-6 flex-1 overflow-y-auto">
                  <h2 className="text-xl font-bold font-display text-neutral-900 mb-4">
-                   {activeNote?.title || `${noteTypes.find(item => item.id === type)?.label} — ${noteTopic || uploadedNoteFile?.name || 'Study Material'}`}
+                   {activeNote?.title || `${noteTypes.find(item => item.id === type)?.label} — ${noteTopic || uploadedNoteFiles[0]?.name || 'Study Material'}`}
                  </h2>
 
                  <div className="prose prose-sm max-w-none">

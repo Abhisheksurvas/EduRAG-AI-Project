@@ -18,7 +18,7 @@ export type UploadedMaterial = {
   uploadedAt: string;   // e.g. 'Just now'
   uploadedBy: string;   // uploader name
   pages?: number;
-  status: 'approved' | 'pending';
+  status: 'approved' | 'pending' | 'ready' | 'indexing' | 'failed' | 'rejected';
   year?: string;
   department?: string;
   description?: string;

@@ -17,10 +17,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import hashlib
 import uuid
 import threading
 import base64
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -194,6 +196,8 @@ memory_store: dict = {
     "recent_activity": [],
     "quiz_questions": [],
     "quiz_results": [],
+    "quiz_attempts": [],
+    "quiz_attempts": [],
     "student_signups": [],
 }
 
@@ -264,15 +268,7 @@ def seed_mongodb_if_needed() -> None:
             {"id": "ra2", "action": "AI Chat Session", "detail": "Asked 4 questions on Graphs", "time": "5 hours ago", "icon": "ai", "userId": "all"},
             {"id": "ra3", "action": "Generated Notes", "detail": "Chapter Summary for OS", "time": "Yesterday", "icon": "notes", "userId": "all"},
         ])
-        seed_collection(mongo_db, "quiz_questions", [
-            {"id": "qq1", "question": "BFS time complexity?", "options": ["O(V)", "O(V+E)", "O(V*E)", "O(V^2)"], "correct": 1},
-            {"id": "qq2", "question": "DFS uses?", "options": ["Queue", "Stack", "Heap", "Hash"], "correct": 1},
-            {"id": "qq3", "question": "Dijkstra finds?", "options": ["MST", "Shortest path", "Max flow", "Topo sort"], "correct": 1},
-        ])
-        seed_collection(mongo_db, "quiz_results", [
-            {"id": "qr1", "quizId": "q1", "question": "BFS complexity?", "yourAnswer": "O(V+E)", "correct": True},
-            {"id": "qr2", "quizId": "q1", "question": "DFS uses?", "yourAnswer": "Heap", "correct": False},
-        ])
+        # quiz_questions and quiz_results seeds removed for per-account isolation
     except Exception as exc:
         print(f"[MongoDB Seed Error] {exc}")
 
@@ -292,6 +288,38 @@ def seed_collection(db, name: str, docs: list[dict]) -> None:
 # Data helpers (load_one / load_many)
 # ---------------------------------------------------------------------------
 
+def _match_query(item: dict, query: dict | None) -> bool:
+    if not query:
+        return True
+    for key, val in query.items():
+        if key == "$or":
+            if not isinstance(val, list):
+                return False
+            if not any(_match_query(item, sub_q) for sub_q in val):
+                return False
+        elif key == "$and":
+            if not isinstance(val, list):
+                return False
+            if not all(_match_query(item, sub_q) for sub_q in val):
+                return False
+        elif isinstance(val, dict):
+            item_val = item.get(key)
+            for op, op_val in val.items():
+                if op == "$in":
+                    if item_val not in op_val:
+                        return False
+                elif op == "$ne":
+                    if item_val == op_val:
+                        return False
+                elif op == "$eq":
+                    if item_val != op_val:
+                        return False
+        else:
+            if item.get(key) != val:
+                return False
+    return True
+
+
 def load_one(collection_name: str, fallback: dict, query: dict | None = None) -> dict:
     if mongo_db is not None:
         try:
@@ -308,7 +336,7 @@ def load_one(collection_name: str, fallback: dict, query: dict | None = None) ->
         store_items = memory_store[collection_name]
         if query:
             for item in store_items:
-                if all(item.get(k) == v for k, v in query.items()):
+                if _match_query(item, query):
                     return item
         if store_items:
             return store_items[0]
@@ -318,10 +346,15 @@ def load_one(collection_name: str, fallback: dict, query: dict | None = None) ->
 def load_many(collection_name: str, fallback: list[dict], query: dict | None = None) -> list[dict]:
     if mongo_db is not None:
         try:
-            items = list(mongo_db[collection_name].find(query or {}, {"_id": 0}))
-            for item in items:
-                item.pop("_id", None)
-            return items
+            items = list(mongo_db[collection_name].find(query or {}))
+            result = []
+            for raw in items:
+                item = dict(raw)
+                _id_val = item.pop("_id", None)
+                if "id" not in item and _id_val is not None:
+                    item["id"] = str(_id_val)
+                result.append(item)
+            return result
         except Exception as exc:
             print(f"MongoDB read failed for {collection_name}: {exc}")
             return fallback
@@ -331,9 +364,9 @@ def load_many(collection_name: str, fallback: list[dict], query: dict | None = N
         if query:
             return [
                 item for item in store_items
-                if all(item.get(k) == v for k, v in query.items())
+                if _match_query(item, query)
             ]
-        return store_items
+        return list(store_items)
     return fallback
 
 
@@ -586,15 +619,9 @@ _fallback_seeds = {
         {"id": "ra2", "action": "AI Chat Session", "detail": "Asked 4 questions on Graphs", "time": "5 hours ago", "icon": "ai", "userId": "all"},
         {"id": "ra3", "action": "Generated Notes", "detail": "Chapter Summary for OS", "time": "Yesterday", "icon": "notes", "userId": "all"},
     ],
-    "quiz_questions": [
-        {"id": "qq1", "question": "BFS time complexity?", "options": ["O(V)", "O(V+E)", "O(V*E)", "O(V^2)"], "correct": 1},
-        {"id": "qq2", "question": "DFS uses?", "options": ["Queue", "Stack", "Heap", "Hash"], "correct": 1},
-        {"id": "qq3", "question": "Dijkstra finds?", "options": ["MST", "Shortest path", "Max flow", "Topo sort"], "correct": 1},
-    ],
-    "quiz_results": [
-        {"id": "qr1", "quizId": "q1", "question": "BFS complexity?", "yourAnswer": "O(V+E)", "correct": True},
-        {"id": "qr2", "quizId": "q1", "question": "DFS uses?", "yourAnswer": "Heap", "correct": False},
-    ],
+    "quiz_questions": [],
+    "quiz_results": [],
+    "quiz_attempts": [],
 }
 
 for collection_name, docs in _fallback_seeds.items():
@@ -661,6 +688,16 @@ class EduRAGHandler(BaseHTTPRequestHandler):
             return None
 
         return payload
+
+    def _get_account_id(self) -> str:
+        """Extract authenticated account ID from JWT token or fallback query/body param."""
+        payload = self._optional_auth()
+        if payload and payload.get("sub"):
+            return str(payload.get("sub", "")).strip()
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+        aid = params.get("accountId", [""])[0] or params.get("userId", [""])[0]
+        return str(aid).strip()
 
     def _optional_auth(self) -> dict | None:
         """Like _require_auth but never writes a response; returns the decoded payload
@@ -815,20 +852,139 @@ class EduRAGHandler(BaseHTTPRequestHandler):
 
         # ---- materials ----
         if path == "/api/materials":
-            # Optional auth: a real JWT is preferred, but local/demo sessions have no
-            # backend JWT, so fall back to the userId/role supplied as query params
-            # (mirrors the existing /api/chat/history behaviour).
             payload = self._optional_auth()
             user_id = (payload.get("sub") if payload else "") or query_params.get("userId", [""])[0] or ""
             role = (payload.get("role") if payload else "") or query_params.get("role", [""])[0] or ""
             all_materials = load_many("materials", [])
+
+            # Also check rag_chunks so any document indexed in the background is discovered
+            try:
+                existing_names = {
+                    str(m.get("name") or m.get("documentName") or m.get("filename") or "").strip().lower()
+                    for m in all_materials
+                    if (m.get("name") or m.get("documentName") or m.get("filename"))
+                }
+                materials_by_id = {str(m.get("id")): m for m in all_materials if m.get("id")}
+                if mongo_db is not None:
+                    chunk_doc_names = mongo_db["rag_chunks"].distinct("documentName")
+                    for doc_name in chunk_doc_names:
+                        if not doc_name:
+                            continue
+                        clean_name = str(doc_name).strip()
+                        if clean_name.lower() in existing_names:
+                            continue
+                        mid = f"mat_{hashlib.md5(clean_name.encode('utf-8')).hexdigest()[:12]}"
+                        inferred_mat = {
+                            "id": mid,
+                            "name": clean_name,
+                            "documentName": clean_name,
+                            "status": "ready",
+                            "course": "General Study Material",
+                            "pages": 1,
+                        }
+                        existing_names.add(clean_name.lower())
+                        materials_by_id[mid] = inferred_mat
+                        all_materials.append(inferred_mat)
+                else:
+                    for ch in memory_store.get("rag_chunks", []):
+                        doc_name = ch.get("documentName") or ch.get("docName") or ch.get("filename") or ch.get("title") or ch.get("name")
+                        if not doc_name:
+                            continue
+                        clean_name = str(doc_name).strip()
+                        if clean_name.lower() in existing_names:
+                            continue
+                        mid = str(ch.get("materialId") or "") or f"mat_{hashlib.md5(clean_name.encode('utf-8')).hexdigest()[:12]}"
+                        inferred_mat = {
+                            "id": mid,
+                            "name": clean_name,
+                            "documentName": clean_name,
+                            "status": "ready",
+                            "course": ch.get("course", "General Study Material"),
+                            "pages": ch.get("page", 1),
+                        }
+                        existing_names.add(clean_name.lower())
+                        materials_by_id[mid] = inferred_mat
+                        all_materials.append(inferred_mat)
+            except Exception as exc:
+                print(f"[Materials] Warning while checking chunks: {exc}")
+
+            # Ensure any material with chunks in rag_chunks is marked ready
+            for m in all_materials:
+                if m.get("status") != "ready":
+                    m_id = str(m.get("id") or "")
+                    m_name = str(m.get("name") or m.get("documentName") or "").strip().lower()
+                    has_chunks = any(
+                        str(ch.get("materialId", "")) == m_id or
+                        str(ch.get("documentName", "")).strip().lower() == m_name
+                        for ch in memory_store.get("rag_chunks", [])
+                    )
+                    if has_chunks:
+                        m["status"] = "ready"
+
             if role == "student":
                 enrolled_ids = get_enrolled_course_ids(user_id, mongo_db, memory_store)
                 filtered = filter_materials_for_role(all_materials, {"sub": user_id, "role": role}, enrolled_ids)
             else:
-                # No identity (demo / public view) — return everything.
                 filtered = all_materials
-            self._write_json(filtered)
+
+            sanitized = []
+            seen_clean_ids = set()
+            for m in filtered:
+                mid = str(m.get("id") or "")
+                if mid and mid in seen_clean_ids:
+                    continue
+                if mid:
+                    seen_clean_ids.add(mid)
+                clean_m = {k: v for k, v in m.items() if k != "fileBase64"}
+                doc_title = clean_m.get("name") or clean_m.get("documentName") or clean_m.get("filename") or clean_m.get("title") or "Document"
+                clean_m["name"] = doc_title
+                clean_m["documentName"] = doc_title
+                sanitized.append(clean_m)
+
+            self._write_json(sanitized)
+            return
+
+        # ---- material indexing status check (fast status polling) ----
+        if path == "/api/materials/status":
+            material_id = str(query_params.get("id", [""])[0]).strip()
+            doc_name = str(query_params.get("name", [""])[0]).strip().lower()
+            
+            chunk_count = 0
+            if material_id or doc_name:
+                for ch in memory_store.get("rag_chunks", []):
+                    ch_mid = str(ch.get("materialId", ""))
+                    ch_dname = str(ch.get("documentName", "")).strip().lower()
+                    if (material_id and ch_mid == material_id) or (doc_name and ch_dname == doc_name):
+                        chunk_count += 1
+                        
+                if mongo_db is not None and chunk_count == 0:
+                    try:
+                        q = []
+                        if material_id:
+                            q.append({"materialId": material_id})
+                        if doc_name:
+                            q.append({"documentName": doc_name})
+                        if q:
+                            chunk_count = mongo_db["rag_chunks"].count_documents({"$or": q})
+                    except Exception:
+                        pass
+            
+            is_ready = chunk_count > 0
+            if not is_ready:
+                for m in memory_store.get("materials", []):
+                    if (material_id and str(m.get("id", "")) == material_id) or (doc_name and str(m.get("name", "")).strip().lower() == doc_name):
+                        if m.get("status") == "ready":
+                            is_ready = True
+                            break
+
+            self._write_json({
+                "success": True,
+                "id": material_id,
+                "name": doc_name,
+                "status": "ready" if is_ready else "processing",
+                "ready": is_ready,
+                "chunks": chunk_count,
+            })
             return
 
         # ---- material preview/download ----
@@ -876,12 +1032,22 @@ class EduRAGHandler(BaseHTTPRequestHandler):
                 self._write_json({"error": "Download failed"}, status_code=HTTPStatus.INTERNAL_SERVER_ERROR)
             return
 
-        # ---- quizzes ----
+        # ---- quizzes (per-account isolated) ----
         if path == "/api/quizzes":
-            payload = self._require_auth()
-            if payload is None:
+            account_id = self._get_account_id()
+            if not account_id:
+                self._write_json([])
                 return
-            quizzes = load_many("quizzes", [])
+            query: dict = {
+                "$or": [
+                    {"accountId": account_id},
+                    {"userId": account_id}
+                ]
+            }
+            status_param = query_params.get("status", [""])[0]
+            if status_param:
+                query["status"] = status_param
+            quizzes = load_many("quizzes", [], query)
             self._write_json(quizzes)
             return
 
@@ -990,20 +1156,42 @@ class EduRAGHandler(BaseHTTPRequestHandler):
             self._write_json(load_many("recent_activity", []))
             return
 
-        # ---- quiz questions ----
+        # ---- quiz questions (per-account isolated) ----
         if path == "/api/quiz-questions":
-            payload = self._require_auth()
-            if payload is None:
+            account_id = self._get_account_id()
+            quiz_id = query_params.get("quizId", [""])[0]
+            if quiz_id:
+                qq = load_many("quiz_questions", [], {"quizId": quiz_id})
+                self._write_json(qq)
                 return
-            self._write_json(load_many("quiz_questions", []))
+            if not account_id:
+                self._write_json([])
+                return
+            user_quizzes = load_many("quizzes", [], {"$or": [{"accountId": account_id}, {"userId": account_id}]})
+            user_quiz_ids = [str(q.get("id")) for q in user_quizzes if q.get("id")]
+            if not user_quiz_ids:
+                self._write_json([])
+                return
+            qq = load_many("quiz_questions", [], {"quizId": {"$in": user_quiz_ids}})
+            self._write_json(qq)
             return
 
-        # ---- quiz results ----
-        if path == "/api/quiz-results":
-            payload = self._require_auth()
-            if payload is None:
+        # ---- quiz attempts / results (per-account isolated) ----
+        if path in ("/api/quiz-attempts", "/api/quiz-results"):
+            account_id = self._get_account_id()
+            if not account_id:
+                self._write_json([])
                 return
-            self._write_json(load_many("quiz_results", []))
+            query = {
+                "$or": [
+                    {"accountId": account_id},
+                    {"userId": account_id}
+                ]
+            }
+            attempts = load_many("quiz_attempts", [], query)
+            if not attempts:
+                attempts = load_many("quiz_results", [], query)
+            self._write_json(attempts)
             return
 
         # ---- fallback ----
@@ -1044,8 +1232,11 @@ class EduRAGHandler(BaseHTTPRequestHandler):
                         self._write_json({"error": "Missing studentId for upload."}, status_code=HTTPStatus.BAD_REQUEST)
                         return
 
-                    if not isinstance(file_data, bytes):
-                        self._write_json({"error": "File is required"}, status_code=HTTPStatus.BAD_REQUEST)
+                    if not isinstance(file_data, bytes) or len(file_data) == 0:
+                        self._write_json(
+                            {"success": False, "error": f"The file '{filename}' was received with 0 bytes. Your browser or computer may be out of disk space (net::ERR_FILE_NO_SPACE)."},
+                            status_code=HTTPStatus.BAD_REQUEST,
+                        )
                         return
 
                     # Validate that the file actually contains extractable text
@@ -1254,6 +1445,176 @@ class EduRAGHandler(BaseHTTPRequestHandler):
             self._write_json({"success": True, "enrollment": doc}, status_code=HTTPStatus.CREATED)
             return
 
+        # ---- quiz generation ----
+        if path == "/api/quiz/generate":
+            body = self._read_json_body()
+            if not isinstance(body, dict):
+                self._write_json({"error": "Invalid quiz generation payload"}, status_code=HTTPStatus.BAD_REQUEST)
+                return
+            token_payload = self._optional_auth()
+            self._handle_quiz_generate(body, token_payload)
+            return
+
+        # ---- notes generation (fast, format-specific) ----
+        if path == "/api/notes/generate":
+            body = self._read_json_body()
+            if not isinstance(body, dict):
+                self._write_json({"error": "Invalid notes generation payload"}, status_code=HTTPStatus.BAD_REQUEST)
+                return
+            token_payload = self._optional_auth()
+            self._handle_notes_generate(body, token_payload)
+            return
+
+        # ---- quiz creation (per-account isolated) ----
+        if path == "/api/quizzes":
+            body = self._read_json_body()
+            if not isinstance(body, dict):
+                self._write_json({"error": "Invalid quiz payload"}, status_code=HTTPStatus.BAD_REQUEST)
+                return
+            account_id = self._get_account_id()
+            if not account_id:
+                account_id = str(body.get("accountId") or body.get("userId") or "").strip()
+            if not account_id:
+                self._write_json({"error": "accountId or userId required"}, status_code=HTTPStatus.UNAUTHORIZED)
+                return
+
+            quiz_id = str(body.get("id") or f"quiz_{uuid.uuid4().hex[:12]}")
+            quiz_doc = {
+                "id": quiz_id,
+                "accountId": account_id,
+                "userId": account_id,
+                "title": str(body.get("title", "Untitled Quiz")),
+                "topic": str(body.get("topic", "")),
+                "source": str(body.get("source") or body.get("course") or "AI Generated"),
+                "questionCount": int(body.get("questionCount") if body.get("questionCount") is not None else (body.get("questions") or 5)),
+                "difficulty": str(body.get("difficulty", "Medium")),
+                "status": str(body.get("status", "unattempted")),
+                "questions": body.get("questionsList") or body.get("questionCount") or body.get("questions") or 5,
+                "duration": int(body.get("duration") if body.get("duration") is not None else 10),
+                "dueDate": str(body.get("dueDate", "Just now")),
+                "course": str(body.get("course") or body.get("source") or "AI Generated"),
+                "createdAt": str(body.get("createdAt") or datetime.now(timezone.utc).isoformat()),
+                "sourceName": str(body.get("sourceName") or ""),
+                "isDocumentBased": bool(body.get("isDocumentBased")),
+            }
+
+            if mongo_db is not None:
+                try:
+                    mongo_db["quizzes"].update_one(
+                        {"id": quiz_id, "$or": [{"accountId": account_id}, {"userId": account_id}]},
+                        {"$set": quiz_doc},
+                        upsert=True
+                    )
+                except Exception as exc:
+                    print(f"[MongoDB] Quiz insert/upsert failed: {exc}")
+
+            if "quizzes" in memory_store:
+                memory_store["quizzes"] = [q for q in memory_store["quizzes"] if q.get("id") != quiz_id]
+                memory_store["quizzes"].insert(0, dict(quiz_doc))
+
+            self._write_json({"success": True, "quiz": quiz_doc, "item": quiz_doc}, status_code=HTTPStatus.CREATED)
+            return
+
+        # ---- quiz attempt submission (per-account isolated) ----
+        if path in ("/api/quiz-attempts", "/api/quiz-results"):
+            body = self._read_json_body()
+            if not isinstance(body, dict):
+                self._write_json({"error": "Invalid quiz attempt payload"}, status_code=HTTPStatus.BAD_REQUEST)
+                return
+            account_id = self._get_account_id()
+            if not account_id:
+                account_id = str(body.get("accountId") or body.get("userId") or "").strip()
+            if not account_id:
+                self._write_json({"error": "accountId or userId required"}, status_code=HTTPStatus.UNAUTHORIZED)
+                return
+
+            attempt_id = str(body.get("id") or f"qa_{uuid.uuid4().hex[:12]}")
+            quiz_id = str(body.get("quizId", ""))
+            score = int(body.get("score", 0))
+            answers = body.get("answers", [])
+            total_questions = int(body.get("totalQuestions") or (len(answers) if isinstance(answers, list) else 0) or 5)
+            completed_at = str(body.get("completedAt") or datetime.now(timezone.utc).isoformat())
+            title = str(body.get("title") or "")
+            topic = str(body.get("topic") or "")
+
+            if not title or not topic:
+                parent_quiz = load_one("quizzes", {}, {"id": quiz_id, "$or": [{"accountId": account_id}, {"userId": account_id}]})
+                if parent_quiz:
+                    title = title or parent_quiz.get("title", "")
+                    topic = topic or parent_quiz.get("topic", "")
+
+            attempt_doc = {
+                "id": attempt_id,
+                "accountId": account_id,
+                "userId": account_id,
+                "quizId": quiz_id,
+                "title": title or "Quiz Attempt",
+                "topic": topic,
+                "score": score,
+                "totalQuestions": total_questions,
+                "answers": answers,
+                "completedAt": completed_at,
+            }
+
+            if mongo_db is not None:
+                try:
+                    mongo_db["quiz_attempts"].update_one(
+                        {"id": attempt_id},
+                        {"$set": attempt_doc},
+                        upsert=True
+                    )
+                    mongo_db["quiz_results"].update_one(
+                        {"id": attempt_id},
+                        {"$set": attempt_doc},
+                        upsert=True
+                    )
+                    if quiz_id:
+                        mongo_db["quizzes"].update_one(
+                            {"id": quiz_id, "$or": [{"accountId": account_id}, {"userId": account_id}]},
+                            {"$set": {"status": "completed", "score": score, "dueDate": "Completed just now"}}
+                        )
+                except Exception as exc:
+                    print(f"[MongoDB] Quiz attempt save failed: {exc}")
+
+            for col in ("quiz_attempts", "quiz_results"):
+                if col in memory_store:
+                    memory_store[col] = [a for a in memory_store[col] if a.get("id") != attempt_id]
+                    memory_store[col].insert(0, dict(attempt_doc))
+
+            if "quizzes" in memory_store and quiz_id:
+                for q in memory_store["quizzes"]:
+                    if q.get("id") == quiz_id and (q.get("accountId") == account_id or q.get("userId") == account_id):
+                        q["status"] = "completed"
+                        q["score"] = score
+                        q["dueDate"] = "Completed just now"
+
+            self._write_json({"success": True, "attempt": attempt_doc, "item": attempt_doc}, status_code=HTTPStatus.CREATED)
+            return
+
+        # ---- quiz questions batch save ----
+        if path == "/api/quiz-questions/batch":
+            payload = self._require_auth()
+            if payload is None:
+                return
+            body = self._read_json_body()
+            if not isinstance(body, dict) or not isinstance(body.get("questions"), list):
+                self._write_json({"error": "Invalid batch payload: 'questions' array required"}, status_code=HTTPStatus.BAD_REQUEST)
+                return
+            questions = body.get("questions", [])
+            if questions:
+                if mongo_db is not None:
+                    try:
+                        docs = [dict(q) for q in questions]
+                        mongo_db["quiz_questions"].insert_many(docs)
+                        for d in docs:
+                            d.pop("_id", None)
+                    except Exception as exc:
+                        print(f"[MongoDB] Batch insert failed for quiz_questions: {exc}")
+                if "quiz_questions" in memory_store:
+                    memory_store["quiz_questions"].extend([dict(q) for q in questions])
+            self._write_json({"success": True, "count": len(questions)}, status_code=HTTPStatus.CREATED)
+            return
+
         # ---- generic collection endpoints (protected) ----
         body = self._read_json_body()
         if not body:
@@ -1367,6 +1728,173 @@ class EduRAGHandler(BaseHTTPRequestHandler):
             self._write_json({"success": True, "deleted": ok})
             return
 
+        # ---- quiz & quiz attempts deletion (enforcing strict per-account isolation) ----
+        if path in ("/api/quizzes", "/api/quiz-attempts", "/api/quiz-results") or path.startswith("/api/quizzes/"):
+            account_id = self._get_account_id()
+            body = self._read_json_body() or {}
+            if not account_id and isinstance(body, dict):
+                account_id = str(body.get("accountId") or body.get("userId") or "").strip()
+            if not account_id:
+                self._write_json({"error": "Unauthorized: accountId required"}, status_code=HTTPStatus.UNAUTHORIZED)
+                return
+
+            query_params = parse_qs(parsed.query)
+            scope = str((body.get("scope") if isinstance(body, dict) else "") or query_params.get("scope", [""])[0] or "").strip().lower()
+            ids = body.get("ids", []) if isinstance(body, dict) else []
+            parts = path.split("/")
+            if len(parts) >= 4 and not ids:
+                ids = [parts[3]]
+            if not ids and "id" in query_params:
+                ids = query_params["id"]
+            if not ids and "ids" in query_params:
+                ids = query_params["ids"]
+            ids = [str(i).strip() for i in ids if str(i).strip()]
+
+            user_clause = {"$or": [{"accountId": account_id}, {"userId": account_id}]}
+            deleted_count = 0
+
+            # Case A: Delete All Unattempted Quizzes for this account
+            if scope == "unattempted":
+                unattempted_filter = {"$and": [user_clause, {"status": {"$ne": "completed"}}]}
+                if mongo_db is not None:
+                    try:
+                        to_del = list(mongo_db["quizzes"].find(unattempted_filter, {"id": 1}))
+                        q_ids = [str(q.get("id")) for q in to_del if q.get("id")]
+                        res = mongo_db["quizzes"].delete_many(unattempted_filter)
+                        deleted_count = res.deleted_count
+                        if q_ids:
+                            mongo_db["quiz_questions"].delete_many({"quizId": {"$in": q_ids}})
+                    except Exception as exc:
+                        print(f"[MongoDB] Failed deleting unattempted quizzes: {exc}")
+
+                if "quizzes" in memory_store:
+                    orig_len = len(memory_store["quizzes"])
+                    memory_store["quizzes"] = [
+                        q for q in memory_store["quizzes"]
+                        if not ((q.get("accountId") == account_id or q.get("userId") == account_id) and q.get("status") != "completed")
+                    ]
+                    if mongo_db is None:
+                        deleted_count = orig_len - len(memory_store["quizzes"])
+
+                self._write_json({
+                    "success": True,
+                    "collection": "quizzes",
+                    "deletedCount": deleted_count,
+                    "scope": "unattempted"
+                })
+                return
+
+            # Case B: Delete All Quiz History / Attempts for this account
+            if scope == "history" or (not ids and path in ("/api/quiz-attempts", "/api/quiz-results")):
+                if mongo_db is not None:
+                    try:
+                        res_qa = mongo_db["quiz_attempts"].delete_many(user_clause)
+                        res_qr = mongo_db["quiz_results"].delete_many(user_clause)
+                        res_qc = mongo_db["quizzes"].delete_many({"$and": [user_clause, {"status": "completed"}]})
+                        deleted_count = res_qa.deleted_count + res_qc.deleted_count
+                    except Exception as exc:
+                        print(f"[MongoDB] Failed deleting quiz history: {exc}")
+
+                for col in ("quiz_attempts", "quiz_results"):
+                    if col in memory_store:
+                        memory_store[col] = [
+                            a for a in memory_store[col]
+                            if not (a.get("accountId") == account_id or a.get("userId") == account_id)
+                        ]
+                if "quizzes" in memory_store:
+                    orig_len = len(memory_store["quizzes"])
+                    memory_store["quizzes"] = [
+                        q for q in memory_store["quizzes"]
+                        if not ((q.get("accountId") == account_id or q.get("userId") == account_id) and q.get("status") == "completed")
+                    ]
+                    if mongo_db is None:
+                        deleted_count = orig_len - len(memory_store["quizzes"])
+
+                self._write_json({
+                    "success": True,
+                    "collection": "quiz_attempts",
+                    "deletedCount": deleted_count,
+                    "scope": "history"
+                })
+                return
+
+            # Case C: Delete Specific Quiz / Attempt IDs — STRICTLY ENFORCE ACCOUNT OWNERSHIP
+            if not ids:
+                self._write_json({"error": "No quiz IDs or scope provided for deletion"}, status_code=HTTPStatus.BAD_REQUEST)
+                return
+
+            if mongo_db is not None:
+                try:
+                    from bson import ObjectId
+                except ImportError:
+                    ObjectId = None
+                obj_ids = []
+                if ObjectId is not None:
+                    for i in ids:
+                        try:
+                            if ObjectId.is_valid(i):
+                                obj_ids.append(ObjectId(i))
+                        except Exception:
+                            pass
+
+                id_or_clause = [{"id": {"$in": ids}}]
+                if obj_ids:
+                    id_or_clause.append({"_id": {"$in": obj_ids}})
+
+                # 1. Delete from quizzes WHERE user owns it
+                quiz_del_query = {"$and": [user_clause, {"$or": id_or_clause}]}
+                try:
+                    res_q = mongo_db["quizzes"].delete_many(quiz_del_query)
+                    deleted_count += res_q.deleted_count
+                except Exception as exc:
+                    print(f"[MongoDB] Failed deleting from quizzes: {exc}")
+
+                # 2. Delete from quiz_attempts & quiz_results WHERE user owns it
+                attempt_del_query = {"$and": [user_clause, {"$or": [{"id": {"$in": ids}}, {"quizId": {"$in": ids}}]}]}
+                try:
+                    res_qa = mongo_db["quiz_attempts"].delete_many(attempt_del_query)
+                    res_qr = mongo_db["quiz_results"].delete_many(attempt_del_query)
+                    deleted_count += res_qa.deleted_count
+                except Exception as exc:
+                    print(f"[MongoDB] Failed deleting from quiz_attempts/results: {exc}")
+
+                # 3. Delete from quiz_questions for these quiz IDs
+                try:
+                    mongo_db["quiz_questions"].delete_many({"quizId": {"$in": ids}})
+                except Exception:
+                    pass
+
+            # 4. Clean memory_store strictly for this account
+            if "quizzes" in memory_store:
+                orig_len = len(memory_store["quizzes"])
+                memory_store["quizzes"] = [
+                    q for q in memory_store["quizzes"]
+                    if not (str(q.get("id")) in ids and (q.get("accountId") == account_id or q.get("userId") == account_id))
+                ]
+                if mongo_db is None:
+                    deleted_count += (orig_len - len(memory_store["quizzes"]))
+
+            for col in ("quiz_attempts", "quiz_results"):
+                if col in memory_store:
+                    memory_store[col] = [
+                        a for a in memory_store[col]
+                        if not ((str(a.get("id")) in ids or str(a.get("quizId")) in ids) and (a.get("accountId") == account_id or a.get("userId") == account_id))
+                    ]
+
+            if "quiz_questions" in memory_store:
+                memory_store["quiz_questions"] = [
+                    qq for qq in memory_store["quiz_questions"]
+                    if str(qq.get("quizId")) not in ids and str(qq.get("id")) not in ids
+                ]
+
+            self._write_json({
+                "success": True,
+                "collection": "quizzes",
+                "deletedCount": deleted_count,
+                "ids": ids,
+            })
+            return
+
         # ---- generic delete (protected) ----
         payload = self._require_auth()
         if payload is None:
@@ -1438,9 +1966,13 @@ class EduRAGHandler(BaseHTTPRequestHandler):
             self._write_json({"error": "Invalid collection endpoint"}, status_code=HTTPStatus.BAD_REQUEST)
             return
 
-        # Ensure user-scoped ownership for notes updates
+        # Ensure user-scoped ownership for notes and quizzes updates
         if collection_name == "notes":
             body["userId"] = payload.get("sub", "") or body.get("userId", "")
+        if collection_name == "quizzes":
+            account_id = payload.get("sub", "") or body.get("accountId") or body.get("userId")
+            body["accountId"] = account_id
+            body["userId"] = account_id
 
         item_id = body.get("id") or body.get("rollNo") or body.get("code") or body.get("role")
         email = body.get("email")
@@ -1616,7 +2148,10 @@ class EduRAGHandler(BaseHTTPRequestHandler):
                 print(f"[MongoDB] Legacy user migration failed: {exc}")
 
         # Build token with optional branch/year claims for students
-        user_id = user.get("userId") or str(user.get("_id", ""))
+        user_id = user.get("userId") or (str(user.get("_id")) if user.get("_id") is not None else "")
+        if not user_id:
+            user_id = f"usr_{email.replace('@', '_').replace('.', '_')}"
+            user["userId"] = user_id
         extra: dict = {"name": user.get("name", ""), "email": email}
 
         # Fetch branch and classYear for students
@@ -1735,6 +2270,452 @@ class EduRAGHandler(BaseHTTPRequestHandler):
                 "email": email,
             },
         }, status_code=HTTPStatus.CREATED)
+
+    def _handle_quiz_generate(self, body: dict, token_payload: dict | None) -> None:
+        token_payload = token_payload or {}
+        topic = str(body.get("topic", "") or "").strip()
+        difficulty = str(body.get("difficulty", "Medium") or "Medium").strip()
+        try:
+            requested_questions = max(1, min(50, int(body.get("count", 5))))
+        except (TypeError, ValueError):
+            requested_questions = 5
+
+        selected_material_ids = body.get("materialIds", [])
+        if not isinstance(selected_material_ids, list):
+            selected_material_ids = []
+
+        question_type = str(body.get("questionType", "MCQ") or "MCQ").strip().upper()
+        if question_type not in ("MCQ", "MSQ", "NAT"):
+            question_type = "MCQ"
+
+        print(f"[Quiz] Request: topic='{topic}', difficulty='{difficulty}', count={requested_questions}, type='{question_type}', materials={selected_material_ids}")
+
+        # Prefer chunks already indexed in memory for the selected PDF. This
+        # avoids a broad database query for every quiz request and is much
+        # faster immediately after a document upload.
+        memory_chunks = list(memory_store.get("rag_chunks", []))
+        all_chunks = memory_chunks
+        selected_memory_chunks = [
+            chunk for chunk in memory_chunks
+            if chunk.get("materialId") in selected_material_ids
+        ] if selected_material_ids else []
+
+        # Only ask MongoDB when the requested document is not already present
+        # in memory. A broad query here can stall quiz generation on a slow DB.
+        if mongo_db is not None and not selected_memory_chunks:
+            try:
+                query = {"materialId": {"$in": selected_material_ids}} if selected_material_ids else {}
+                all_chunks.extend(mongo_db["rag_chunks"].find(query, {"_id": 0}))
+            except Exception as exc:
+                print(f"[RAG] Chunk lookup failed: {exc}")
+
+        seen_chunk_ids = set()
+        unique_chunks = []
+        for c in all_chunks:
+            cid = c.get("id")
+            if cid and cid not in seen_chunk_ids:
+                seen_chunk_ids.add(cid)
+                unique_chunks.append(c)
+        all_chunks = unique_chunks
+
+        # Filter by selected materials if any specified
+        if selected_material_ids:
+            document_chunks = selected_memory_chunks or [
+                c for c in all_chunks if c.get("materialId") in selected_material_ids
+            ]
+        else:
+            document_chunks = all_chunks
+
+        # If topic keywords exist, rank/prioritize matching chunks
+        topic_words = set(re.findall(r"[a-z0-9]+", topic.lower()))
+        topic_words = {w for w in topic_words if len(w) > 2}
+        if topic_words and document_chunks:
+            scored = []
+            for chunk in document_chunks:
+                chunk_text = str(chunk.get("text", "")).lower()
+                score = sum(1 for w in topic_words if w in chunk_text)
+                if score > 0:
+                    scored.append((score, chunk))
+            scored.sort(key=lambda x: x[0], reverse=True)
+            topic_matched = [c for _, c in scored]
+            if len(topic_matched) >= 2:
+                document_chunks = topic_matched
+
+        # Sample chunks evenly across the document
+        # Keep the document prompt compact so PDF-based quizzes return quickly.
+        chunk_limit = min(6, max(3, (requested_questions + 1) // 2))
+        step = max(1, len(document_chunks) // chunk_limit) if document_chunks else 1
+        distributed_chunks = document_chunks[::step][:chunk_limit] if document_chunks else []
+
+        chunk_lines = []
+        for item in distributed_chunks:
+            doc = item.get("documentName", "document")
+            page = item.get("page", "?")
+            text = str(item.get("text", ""))[:320]
+            chunk_lines.append(f"[Document: {doc}, page {page}]\n{text}")
+        rag_context = "\n\n---\n\n".join(chunk_lines)
+
+        target_subject = topic or (distributed_chunks[0].get("documentName", "General") if distributed_chunks else "General")
+        if question_type == "NAT":
+            prompt = (
+                f"Generate exactly {requested_questions} Numerical Answer Type (NAT) questions "
+                f"at {difficulty} difficulty relevant to \"{target_subject}\".\n"
+                f"Each question must require a specific numerical answer (e.g. integer, port, calculation, count).\n"
+                f"CRITICAL: Do NOT mention or repeat the topic name \"{target_subject}\" in the question text.\n"
+                f"CRITICAL: Do NOT begin questions with 'Based on the notes material', 'Based on the document', or any similar phrase. Ask direct questions.\n"
+                f"Output ONLY a valid JSON array starting with [ and ending with ]. No markdown, no code blocks.\n"
+                f"Format: [{{\"question\": \"...\", \"type\": \"NAT\", \"correct\": 42, \"options\": [], \"explanation\": \"...\"}}]"
+            )
+        elif question_type == "MSQ":
+            prompt = (
+                f"Generate exactly {requested_questions} Multiple Select Questions (MSQ) "
+                f"at {difficulty} difficulty relevant to \"{target_subject}\" where ONE OR MORE options are correct.\n"
+                f"CRITICAL: Do NOT mention or repeat the topic name \"{target_subject}\" in the question text.\n"
+                f"CRITICAL: Do NOT begin questions with 'Based on the notes material', 'Based on the document', or any similar phrase. Ask direct questions.\n"
+                f"Output ONLY a valid JSON array starting with [ and ending with ]. No markdown, no code blocks.\n"
+                f"Format: [{{\"question\": \"...\", \"type\": \"MSQ\", \"options\": [\"opt1\",\"opt2\",\"opt3\",\"opt4\"], \"correct\": [0, 2], \"explanation\": \"...\"}}]"
+            )
+        else:
+            prompt = (
+                f"Generate exactly {requested_questions} multiple-choice questions (MCQ) "
+                f"at {difficulty} difficulty relevant to \"{target_subject}\".\n"
+                f"CRITICAL: Do NOT mention or repeat the topic name \"{target_subject}\" in the question text.\n"
+                f"CRITICAL: Do NOT begin questions with 'Based on the notes material', 'Based on the document', or any similar phrase. Ask direct questions.\n"
+                f"Output ONLY a valid JSON array starting with [ and ending with ]. No markdown, no code blocks, no other text.\n"
+                f"Format: [{{\"question\": \"...\", \"type\": \"MCQ\", \"options\": [\"opt1\",\"opt2\",\"opt3\",\"opt4\"], \"correct\": 0, \"explanation\": \"...\"}}]"
+            )
+
+        answer = None
+        if study_buddy is not None:
+            # Some provider clients can ignore their configured socket timeout.
+            # Keep the HTTP request responsive by moving the optional AI call to
+            # a bounded worker; the deterministic local generator is used if it
+            # does not return promptly.
+            executor = ThreadPoolExecutor(max_workers=1)
+            try:
+                future = executor.submit(
+                    study_buddy.ask,
+                    topic=target_subject,
+                    difficulty=difficulty,
+                    question=prompt,
+                    context=rag_context,
+                    history=[],
+                    max_tokens=max(500, min(3500, requested_questions * 140)),
+                    strict_context=bool(rag_context),
+                    temperature=0.3,
+                )
+                answer = future.result(timeout=15)
+            except FuturesTimeoutError:
+                print("[Quiz] AI provider exceeded 15 seconds; using fast local quiz fallback")
+            except Exception as exc:
+                print(f"[Quiz] LLM generation failed: {exc}")
+                answer = None
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
+
+        # Verify output is valid JSON array; otherwise fallback to local generator
+        if not answer or "[" not in answer or "]" not in answer:
+            if StudyBuddy is not None:
+                answer = StudyBuddy._local_quiz_answer(
+                    topic=target_subject,
+                    context=rag_context,
+                    difficulty=difficulty,
+                    count=requested_questions,
+                    question_type=question_type,
+                )
+                print(f"[Quiz] Fallback local quiz generated ({len(answer)} chars)")
+
+        if not answer:
+            self._write_json(
+                {"success": False, "error": "Quiz generation failed. Please try again."},
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            )
+            return
+
+        print(f"[Quiz] Generated response: length={len(answer)} chars")
+        self._write_json({"success": True, "answer": answer})
+
+    _notes_cache: dict = {}
+
+    def _handle_notes_generate(self, body: dict, token_payload: dict) -> None:
+        topic = str(body.get("topic", "")).strip()
+        note_type = str(body.get("type", "summary")).strip().lower()
+        if note_type not in ("summary", "keypoints", "definitions", "formulas"):
+            note_type = "summary"
+        material_ids = body.get("materialIds", [])
+        custom_context = str(body.get("context", "")).strip()
+
+        all_chunks = list(memory_store.get("rag_chunks", []))
+        relevant_chunks = []
+        if material_ids:
+            mat_set = {str(m) for m in material_ids}
+            relevant_chunks = [c for c in all_chunks if str(c.get("materialId", "")) in mat_set]
+        elif topic:
+            t_lower = topic.lower()
+            relevant_chunks = [
+                c for c in all_chunks
+                if t_lower in str(c.get("text", "")).lower() or t_lower in str(c.get("documentName", "")).lower()
+            ]
+
+        context_parts = []
+        if custom_context:
+            context_parts.append(custom_context)
+        for chunk in relevant_chunks[:6]:
+            doc_name = chunk.get("documentName", "Document")
+            page_no = chunk.get("page", 1)
+            text_snippet = str(chunk.get("text", ""))[:400]
+            context_parts.append(f"[{doc_name} - Page {page_no}]: {text_snippet}")
+        rag_context = "\n\n".join(context_parts)
+
+        target_topic = topic or (relevant_chunks[0].get("documentName", "Study Material") if relevant_chunks else "General Concepts")
+
+        format_titles = {
+            "summary": "Chapter Summary",
+            "keypoints": "Key Points",
+            "definitions": "Definitions & Terminology",
+            "formulas": "Formula Sheet & Reference Guide",
+        }
+        format_name = format_titles.get(note_type, "Study Notes")
+
+        cache_key = f"{target_topic.strip().lower()}::{note_type}::{hash(rag_context)}"
+        if cache_key in EduRAGHandler._notes_cache:
+            self._write_json({
+                "success": True,
+                "title": f"{format_name} — {target_topic}",
+                "type": note_type,
+                "topic": target_topic,
+                "content": EduRAGHandler._notes_cache[cache_key],
+                "cached": True,
+            })
+            return
+
+        if note_type == "summary":
+            prompt = (
+                f"Generate a comprehensive, high-yield Chapter Summary for the topic: \"{target_topic}\".\n"
+                f"Structure the response clearly using clean Markdown:\n"
+                f"# 📚 {format_name}: {target_topic}\n\n"
+                f"## 1. Executive Summary\n"
+                f"(Clear 2-3 paragraph conceptual overview)\n\n"
+                f"## 2. Core Concepts & Architectural Principles\n"
+                f"(Detailed breakdown of foundational principles with bold key terms)\n\n"
+                f"## 3. Step-by-Step Mechanisms & Processes\n"
+                f"(Sequential explanation of operations or workflows)\n\n"
+                f"## 4. Key Takeaways & Exam Highlights\n"
+                f"(Bullet points every student must know)\n"
+            )
+        elif note_type == "keypoints":
+            prompt = (
+                f"Generate high-impact, high-yield Key Points for the topic: \"{target_topic}\".\n"
+                f"Structure the response clearly using clean Markdown:\n"
+                f"# 🎯 {format_name}: {target_topic}\n\n"
+                f"## 📌 Essential Concepts to Master\n"
+                f"(10-12 high-impact bullet points with clear explanations)\n\n"
+                f"## ⚠️ Critical Pitfalls & Common Exam Traps\n"
+                f"(Common mistakes students make and how to avoid them)\n\n"
+                f"## 💡 Best Practices & Practical Tips\n"
+                f"(Real-world applications and key problem-solving techniques)\n"
+            )
+        elif note_type == "definitions":
+            prompt = (
+                f"Generate a thorough, structured Definitions Glossary for the topic: \"{target_topic}\".\n"
+                f"Structure the response clearly using clean Markdown:\n"
+                f"# 📖 {format_name}: {target_topic}\n\n"
+                f"## 🏷️ Essential Definitions & Terms\n"
+                f"Provide 10-15 key terms formatted as:\n"
+                f"- **[Term Name]**: *Definition*: [Formal concise definition]. *Example/Context*: [Concrete illustration].\n\n"
+                f"## 🔍 Comparative Terminology\n"
+                f"(Contrast easily confused terms side-by-side)\n"
+            )
+        else:
+            prompt = (
+                f"Generate an exhaustive Formula Sheet & Reference Guide for the topic: \"{target_topic}\".\n"
+                f"Structure the response clearly using clean Markdown:\n"
+                f"# 📐 {format_name}: {target_topic}\n\n"
+                f"## ⚡ Core Formulas, Equations & Identities\n"
+                f"(List all fundamental mathematical or algorithmic equations with variable definitions)\n\n"
+                f"## ⏱️ Algorithmic Complexities & Bounds\n"
+                f"(Big-O time and space bounds in a Markdown table)\n\n"
+                f"## 🔢 Parameter Glossary & Constants\n"
+                f"(Symbols, standard values, and metric units)\n"
+            )
+
+        if rag_context:
+            prompt += f"\nUse this verified document context when applicable:\n{rag_context}\n"
+
+        notes_content = None
+        if study_buddy is not None:
+            executor = ThreadPoolExecutor(max_workers=1)
+            try:
+                future = executor.submit(
+                    study_buddy.ask,
+                    topic=target_topic,
+                    difficulty="Medium",
+                    question=prompt,
+                    context=rag_context,
+                    history=[],
+                    max_tokens=700,
+                    strict_context=False,
+                    temperature=0.2,
+                )
+                notes_content = future.result(timeout=3.0)
+            except FuturesTimeoutError:
+                print(f"[Notes] AI provider took >3.0s for {target_topic}; using fast local notes generator")
+            except Exception as exc:
+                print(f"[Notes] AI generation failed: {exc}")
+                notes_content = None
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
+
+        if not notes_content or len(notes_content.strip()) < 60:
+            notes_content = self._local_generate_notes(target_topic, note_type, rag_context)
+
+        if notes_content:
+            EduRAGHandler._notes_cache[cache_key] = notes_content
+
+        self._write_json({
+            "success": True,
+            "title": f"{format_name} — {target_topic}",
+            "type": note_type,
+            "topic": target_topic,
+            "content": notes_content,
+        })
+
+    @staticmethod
+    def _local_generate_notes(topic: str, note_type: str, context: str = "") -> str:
+        clean_topic = topic.strip() or "General Study Notes"
+        t_lower = clean_topic.lower()
+
+        curr_text = ""
+        try:
+            curr_path = os.path.join(os.path.dirname(__file__), "curriculum.json")
+            if os.path.exists(curr_path):
+                with open(curr_path, "r", encoding="utf-8") as f:
+                    curr_data = json.load(f)
+                    for k, val in curr_data.items():
+                        if k in t_lower or any(word in t_lower for word in k.split() if len(word) > 3):
+                            curr_text = str(val)
+                            break
+        except Exception as e:
+            print(f"[Notes] Curriculum read failed: {e}")
+
+        context_sentences = []
+        if context:
+            clean_ctx = re.sub(r"\[.*?\]", "", context).strip()
+            context_sentences = [s.strip() for s in re.split(r"[.\n]+", clean_ctx) if len(s.strip()) > 25]
+
+        doc_points = ""
+        if context_sentences:
+            doc_points = "\n".join([f"- **Key Fact**: {s}." for s in context_sentences[:6]])
+
+        if note_type == "summary":
+            content = [
+                f"# 📚 Chapter Summary: {clean_topic}\n",
+                f"## 1. Executive Overview\n",
+                f"**{clean_topic}** represents a fundamental pillar in modern computing and curriculum studies. "
+                f"Mastery of {clean_topic} provides essential conceptual depth, architectural insight, and practical problem-solving capability. "
+                f"Understanding its core principles enables students to design robust systems, reason about trade-offs, and solve complex engineering problems.\n",
+                f"## 2. Core Concepts & Architectural Principles\n",
+                f"- **Foundational Architecture**: Structure and baseline components that define {clean_topic}.\n",
+                f"- **Functional Abstraction**: Separation of interface boundaries, modularity, and lifecycle management.\n",
+                f"- **Data Flow & Resource Handling**: Efficient management of input, intermediate transformations, and output consistency.\n",
+                f"- **Operational Guarantees**: Reliability, fault tolerance, and concurrency considerations.\n",
+            ]
+            if curr_text:
+                content.append(f"### Curriculum Reference\n{curr_text}\n")
+            if doc_points:
+                content.append(f"### Document Key Points\n{doc_points}\n")
+            content.extend([
+                f"## 3. Step-by-Step Mechanisms\n",
+                f"1. **Initialization & Setup**: Establishing prerequisites, loading configurations, and validating constraints.\n",
+                f"2. **Core Execution**: Processing operations through structured validation, state transitions, and boundary checks.\n",
+                f"3. **Verification & Error Handling**: Detecting anomalous conditions, handling edge cases, and logging state changes.\n",
+                f"4. **Completion & Finalization**: Committing results, releasing acquired resources, and returning deterministic status.\n",
+                f"## 4. Key Takeaways & Exam Highlights\n",
+                f"- Remember the primary trade-offs: time vs. space, simplicity vs. extensibility.\n",
+                f"- Always identify boundary conditions (empty states, overflow, concurrent access) during examinations.\n",
+                f"- Review fundamental definitions and ensure precise terminology usage in theoretical questions.\n"
+            ])
+            return "\n".join(content)
+
+        elif note_type == "keypoints":
+            content = [
+                f"# 🎯 Key Points & High-Yield Review: {clean_topic}\n",
+                f"## 📌 Essential Concepts to Master\n",
+                f"1. **Core Definition**: {clean_topic} is established on strict modular separation and mathematical/operational rigor.\n",
+                f"2. **Primary Objective**: Optimizes resource utilization, enforces correctness, and streamlines execution.\n",
+                f"3. **Invariants**: Key rules and assertions that must hold true before and after state transitions.\n",
+                f"4. **Scalability**: Performance characteristics when input volume ($N$) grows arbitrarily large.\n",
+                f"5. **Boundary Robustness**: Handling null parameters, extreme ranges, and unexpected inputs.\n",
+                f"6. **Standard Paradigms**: Common architectural and design patterns applied in standard implementations.\n",
+            ]
+            if curr_text:
+                content.append(f"## 📖 Grounded Syllabus Highlights\n{curr_text}\n")
+            if doc_points:
+                content.append(f"## 📄 Document Takeaways\n{doc_points}\n")
+            content.extend([
+                f"## ⚠️ Critical Pitfalls & Common Exam Traps\n",
+                f"- **Trap 1**: Confusing worst-case time complexity with average-case performance.\n",
+                f"- **Trap 2**: Neglecting off-by-one boundary conditions and edge values.\n",
+                f"- **Trap 3**: Forgetting to release acquired handles or clean up state.\n",
+                f"- **Trap 4**: Assuming uniform memory layout in distributed or virtualized environments.\n",
+                f"## 💡 Best Practices & Practical Tips\n",
+                f"- Write comprehensive boundary tests covering minimum, maximum, and invalid inputs.\n",
+                f"- Maintain clean separation of concerns between business logic and resource management.\n"
+            ])
+            return "\n".join(content)
+
+        elif note_type == "definitions":
+            content = [
+                f"# 📖 Terminology & Definitions Glossary: {clean_topic}\n",
+                f"## 🏷️ Essential Definitions\n",
+                f"- **{clean_topic}**: The overarching system, domain, or computational technique governing structured operations and workflows.\n",
+                f"- **Abstraction**: The principle of hiding complex low-level implementation details behind clean, well-defined interfaces.\n",
+                f"- **Modularity**: Decomposing a complex system into independent, interchangeable modules.\n",
+                f"- **Determinism**: The property whereby a given input sequence consistently produces the identical output sequence.\n",
+                f"- **Concurrency**: The ability of different parts or units of a program or system to execute out-of-order or in partial order without affecting the final outcome.\n",
+                f"- **Throughput**: The rate at which useful work or units of computation are successfully processed over a given time interval.\n",
+                f"- **Latency**: The time interval between the stimulation and the response, or time taken for a transaction to complete.\n",
+                f"- **State Invariant**: A condition that must always evaluate to true during valid execution intervals.\n",
+                f"- **Fault Tolerance**: The capability of a system to continue normal operation despite the unexpected failure of some of its components.\n",
+            ]
+            if curr_text:
+                content.append(f"## 📘 Syllabus Reference\n{curr_text}\n")
+            if doc_points:
+                content.append(f"## 📑 Document Terms\n{doc_points}\n")
+            content.extend([
+                f"## 🔍 Comparative Terminology\n",
+                f"- **Synchronous vs. Asynchronous**: Synchronous operations block execution until completion; asynchronous operations return immediately and execute concurrently.\n",
+                f"- **Latency vs. Throughput**: Latency measures duration per request; throughput measures total requests handled per second.\n",
+                f"- **Static vs. Dynamic**: Static properties are fixed before runtime; dynamic properties adjust adaptively during execution.\n"
+            ])
+            return "\n".join(content)
+
+        else: # formulas
+            content = [
+                f"# 📐 Formula Sheet & Reference Guide: {clean_topic}\n",
+                f"## ⚡ Fundamental Formulas & Relationships\n",
+                f"- **System Efficiency ($E$)**:\n  $$E = \\frac{{\\text{{Useful Work Output}}}}{{\\text{{Total Energy / Time Input}}}} \\times 100\\%$$\n",
+                f"- **Amdahl's Law (Speedup $S$)**:\n  $$S(p) = \\frac{{1}}{{(1 - f) + \\frac{{f}}{{p}}}}$$\n  *Where $f$ is parallel fraction, $p$ is number of processors.*\n",
+                f"- **Little's Law (Queueing)**:\n  $$L = \\lambda \\times W$$\n  *Where $L$ is average items in system, $\\lambda$ is arrival rate, $W$ is average wait time.*\n",
+                f"- **Information Entropy ($H$)**:\n  $$H(X) = -\\sum_{{i=1}}^n P(x_i) \\log_2 P(x_i)$$\n",
+                f"## ⏱️ Algorithmic Complexities & Bounds\n",
+                f"| Operation / Scenario | Best Case | Average Case | Worst Case | Space Complexity |\n",
+                f"| :--- | :--- | :--- | :--- | :--- |\n",
+                f"| Lookup / Access | $O(1)$ | $O(1)$ or $O(\\log N)$ | $O(N)$ | $O(1)$ |\n",
+                f"| Search | $O(1)$ | $O(\\log N)$ | $O(N)$ | $O(1)$ |\n",
+                f"| Insertion / Update | $O(1)$ | $O(\\log N)$ | $O(N)$ | $O(1)$ |\n",
+                f"| Traversal / Sort | $O(N)$ | $O(N \\log N)$ | $O(N^2)$ | $O(N)$ or $O(1)$ |\n\n",
+                f"## 🔢 Variable & Parameter Glossary\n",
+                f"- $N$: Total number of elements or input scale.\n",
+                f"- $T(N)$: Time required as a function of input size.\n",
+                f"- $S(N)$: Auxiliary space required during execution.\n",
+                f"- $\\lambda$: Average rate of incoming requests or arrivals.\n",
+            ]
+            if curr_text:
+                content.append(f"## 📄 Conceptual Context\n{curr_text}\n")
+            if doc_points:
+                content.append(f"## 📝 Document Specific Data\n{doc_points}\n")
+            return "\n".join(content)
 
     def _handle_chat(self, body: dict, token_payload: dict) -> None:
         question = str(body.get("question", "")).strip()

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Library, Download, Eye, ExternalLink } from 'lucide-react';
-import { Card, CardHeader, CardBody } from '@/components/ui';
+import { Library, Download, Eye, ExternalLink, CheckCircle2, LoaderCircle, AlertTriangle } from 'lucide-react';
+import { Card, CardHeader, CardBody, Badge } from '@/components/ui';
 import { fetchDocuments } from '@/lib/dataService';
 import { useMaterials } from '@/lib/materialsStore';
 
@@ -40,6 +40,7 @@ export default function MyLibrary() {
     author: d.uploadedBy || 'Unknown',
     file: (d.type || 'pdf').toUpperCase(),
     hasFile: Boolean(d.id),
+    status: d.status,
   }));
 
   const openMaterial = (id, inline) => {
@@ -58,7 +59,20 @@ export default function MyLibrary() {
       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
         {books.map(book => (
           <Card key={book.id} hover>
-            <CardHeader title={book.title} subtitle={book.author} icon={Library} />
+            <CardHeader
+              title={book.title}
+              subtitle={book.author}
+              icon={Library}
+              action={
+                book.status === 'approved' || book.status === 'ready' ? (
+                  <Badge tone="success"><CheckCircle2 className="h-3 w-3" /> Ready</Badge>
+                ) : book.status === 'pending' || book.status === 'indexing' ? (
+                  <Badge tone="warning"><LoaderCircle className="h-3 w-3 animate-spin" /> Processing…</Badge>
+                ) : book.status === 'failed' || book.status === 'rejected' ? (
+                  <Badge tone="error"><AlertTriangle className="h-3 w-3" /> Failed</Badge>
+                ) : null
+              }
+            />
             <CardBody className="space-y-4">
               <div className="flex justify-between items-center text-xs text-neutral-500 font-semibold bg-neutral-50 p-2 rounded">
                 <span>Format:</span>

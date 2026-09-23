@@ -21,3 +21,9 @@ dist-ssr
 *.sln
 *.sw?
 .env
+__pycache__/
+*.py[cod]
+*$py.class
+scratch/
+test_openrouter.py
+test_*.py

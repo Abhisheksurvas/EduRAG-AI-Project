@@ -124,14 +124,20 @@ export type Quiz = {
   status: 'upcoming' | 'completed' | 'in-progress';
   dueDate: string;
   topic: string;
+  attempted?: boolean;
+  difficulty?: 'Easy' | 'Medium' | 'Hard';
+  sourceName?: string;
+  isDocumentBased?: boolean;
+  createdAt?: string;
+  createdDate?: string;
 };
 
 export const quizzes: Quiz[] = [
-  { id: 'q1', title: 'Graph Algorithms Quiz', course: 'CS501', questions: 20, duration: 30, score: 85, status: 'completed', dueDate: 'Completed 2d ago', topic: 'BFS, DFS, Shortest Path' },
-  { id: 'q2', title: 'DBMS Normalization Quiz', course: 'CS503', questions: 15, duration: 25, score: 72, status: 'completed', dueDate: 'Completed 5d ago', topic: '1NF to BCNF' },
-  { id: 'q3', title: 'Process Scheduling Quiz', course: 'CS505', questions: 25, duration: 40, status: 'upcoming', dueDate: 'Due in 2 days', topic: 'FCFS, SJF, Round Robin' },
-  { id: 'q4', title: 'Discrete Math — Graph Theory', course: 'MA501', questions: 20, duration: 30, score: 92, status: 'completed', dueDate: 'Completed 1w ago', topic: 'Trees, Euler, Hamilton' },
-  { id: 'q5', title: 'ML Foundations Quiz', course: 'CS509', questions: 18, duration: 30, status: 'upcoming', dueDate: 'Due in 5 days', topic: 'Regression & Classification' },
+  { id: 'q1', title: 'Graph Algorithms Quiz', course: 'CS501', questions: 5, duration: 10, score: 85, status: 'completed', dueDate: 'Completed 2d ago', topic: 'BFS, DFS, Shortest Path', difficulty: 'Medium', createdAt: '2026-09-21T10:00:00Z' },
+  { id: 'q2', title: 'DBMS Normalization Quiz', course: 'CS503', questions: 5, duration: 10, score: 72, status: 'completed', dueDate: 'Completed 5d ago', topic: '1NF to BCNF', difficulty: 'Medium', createdAt: '2026-09-18T14:30:00Z' },
+  { id: 'q3', title: 'Process Scheduling Quiz', course: 'CS505', questions: 5, duration: 10, status: 'upcoming', dueDate: 'Due in 2 days', topic: 'FCFS, SJF, Round Robin', difficulty: 'Hard', createdAt: '2026-09-23T11:15:00Z' },
+  { id: 'q4', title: 'Discrete Math — Graph Theory', course: 'MA501', questions: 5, duration: 10, score: 92, status: 'completed', dueDate: 'Completed 1w ago', topic: 'Trees, Euler, Hamilton', difficulty: 'Hard', createdAt: '2026-09-16T09:00:00Z' },
+  { id: 'q5', title: 'ML Foundations Quiz', course: 'CS509', questions: 5, duration: 10, status: 'upcoming', dueDate: 'Due in 5 days', topic: 'Regression & Classification', difficulty: 'Medium', createdAt: '2026-09-22T16:45:00Z' },
 ];
 
 export type ChatMessage = {
@@ -142,7 +148,7 @@ export type ChatMessage = {
   aiAnswer?: string;
   sources?: { doc: string; page: number; excerpt: string }[];
   sourceType?: 'document' | 'general';
-  attachments?: { id: string; name: string; status?: 'indexing' | 'ready' }[];
+  attachments?: { id: string; name: string; status?: 'indexing' | 'ready' | 'failed' }[];
   timestamp: string;
 };
 
@@ -281,11 +287,40 @@ export const messages = [
 ];
 
 export const quizQuestions = [
-  { id: 'qq1', question: 'What is the time complexity of BFS using an adjacency list?', options: ['O(V)', 'O(V + E)', 'O(V * E)', 'O(V²)'], correct: 1 },
-  { id: 'qq2', question: 'Which data structure does DFS use?', options: ['Queue', 'Stack', 'Heap', 'Hash Table'], correct: 1 },
-  { id: 'qq3', question: 'Dijkstra\'s algorithm is used for finding?', options: ['Minimum Spanning Tree', 'Shortest path in weighted graph', 'Maximum flow', 'Topological sort'], correct: 1 },
-  { id: 'qq4', question: 'Kruskal\'s algorithm uses which data structure to detect cycles?', options: ['Stack', 'Queue', 'Union-Find', 'Hash Map'], correct: 2 },
-  { id: 'qq5', question: 'What is the space complexity of DFS?', options: ['O(V)', 'O(E)', 'O(V + E)', 'O(V²)'], correct: 0 },
+  // q1: Graph Algorithms Quiz
+  { id: 'qq1', quizId: 'q1', question: 'What is the time complexity of BFS using an adjacency list?', options: ['O(V)', 'O(V + E)', 'O(V * E)', 'O(V²)'], correct: 1, explanation: 'BFS visits every vertex and explores every edge once in an adjacency list representation.' },
+  { id: 'qq2', quizId: 'q1', question: 'Which data structure does DFS primarily use for traversal?', options: ['Queue', 'Stack / Recursion', 'Min-Heap', 'Hash Table'], correct: 1, explanation: 'DFS uses a LIFO stack or recursive call stack to backtrack after reaching dead ends.' },
+  { id: 'qq3', quizId: 'q1', question: 'Dijkstra\'s algorithm is used for finding?', options: ['Minimum Spanning Tree', 'Single-source shortest path in non-negative weighted graph', 'Maximum network flow', 'Topological ordering'], correct: 1, explanation: 'Dijkstra calculates shortest paths from a single source to all other vertices with non-negative edge weights.' },
+  { id: 'qq4', quizId: 'q1', question: 'Kruskal\'s algorithm uses which data structure to detect cycles efficiently?', options: ['Stack', 'Queue', 'Union-Find (Disjoint Set)', 'Hash Map'], correct: 2, explanation: 'Disjoint-set (Union-Find) with path compression checks if adding an edge connects already-connected vertices.' },
+  { id: 'qq5', quizId: 'q1', question: 'What is the auxiliary space complexity of DFS on a graph with V vertices?', options: ['O(V)', 'O(E)', 'O(V + E)', 'O(1)'], correct: 0, explanation: 'In the worst case (e.g., a path graph), recursion or stack stores up to V vertices.' },
+
+  // q2: DBMS Normalization Quiz
+  { id: 'qq6', quizId: 'q2', question: 'Which normal form eliminates partial dependencies on candidate keys?', options: ['First Normal Form (1NF)', 'Second Normal Form (2NF)', 'Third Normal Form (3NF)', 'Boyce-Codd Normal Form (BCNF)'], correct: 1, explanation: '2NF requires 1NF and guarantees that no non-prime attribute is partially dependent on any candidate key.' },
+  { id: 'qq7', quizId: 'q2', question: 'What is the primary condition for a relation to be in 1NF?', options: ['No multivalued or composite attributes (atomic values only)', 'No transitive dependencies', 'Every determinant is a candidate key', 'No foreign keys'], correct: 0, explanation: '1NF mandates that domain values are atomic and repeating groups are eliminated.' },
+  { id: 'qq8', quizId: 'q2', question: 'A relation is in 3NF if for every functional dependency X -> Y, which condition holds?', options: ['X is a superkey OR Y is a prime attribute', 'X is a prime attribute and Y is a superkey', 'Y must be a foreign key', 'X and Y must be identical'], correct: 0, explanation: '3NF allows non-trivial dependencies only if the determinant is a superkey or the dependent attribute is prime.' },
+  { id: 'qq9', quizId: 'q2', question: 'How is Boyce-Codd Normal Form (BCNF) stricter than 3NF?', options: ['BCNF does not allow Y to be a prime attribute when X is not a superkey', 'BCNF requires multi-valued dependencies', 'BCNF does not guarantee lossless decomposition', 'BCNF only applies to numeric columns'], correct: 0, explanation: 'In BCNF, for every functional dependency X -> Y, X must strictly be a superkey.' },
+  { id: 'qq10', quizId: 'q2', question: 'Which decomposition property ensures that the natural join of decomposed relations yields the original relation?', options: ['Dependency Preservation', 'Lossless-Join Decomposition', 'Referential Integrity', 'ACID Atomicity'], correct: 1, explanation: 'Lossless join ensures no spurious tuples are created upon rejoining decomposed tables.' },
+
+  // q3: Process Scheduling Quiz (Unattempted)
+  { id: 'qq11', quizId: 'q3', question: 'What is the primary downside of First-Come, First-Served (FCFS) CPU scheduling?', options: ['High scheduling overhead', 'Convoy Effect where short jobs wait behind long jobs', 'Frequent context switching', 'Starvation of high-priority processes'], correct: 1, explanation: 'The Convoy Effect occurs when a CPU-bound process holds the CPU, causing I/O-bound processes to wait.' },
+  { id: 'qq12', quizId: 'q3', question: 'Which scheduling algorithm is provably optimal for minimizing average waiting time?', options: ['Round Robin (RR)', 'Shortest Job First (SJF / SRTF)', 'Priority Scheduling', 'Multilevel Queue'], correct: 1, explanation: 'SJF gives the lowest average waiting time because shorter jobs complete first, reducing overall wait times.' },
+  { id: 'qq13', quizId: 'q3', question: 'In Round Robin scheduling, what happens if the time quantum is chosen to be extremely large?', options: ['It degenerates into First-Come First-Served (FCFS)', 'It behaves like Shortest Remaining Time First', 'Context switches increase exponentially', 'Processes starve indefinitely'], correct: 0, explanation: 'With an arbitrarily large quantum, each process runs to completion on its first turn, behaving like FCFS.' },
+  { id: 'qq14', quizId: 'q3', question: 'How is Turnaround Time calculated for a process?', options: ['Completion Time - Arrival Time', 'Burst Time - Waiting Time', 'Waiting Time + Context Switch Time', 'Arrival Time + Burst Time'], correct: 0, explanation: 'Turnaround Time measures the entire interval from when the process arrives until its final completion.' },
+  { id: 'qq15', quizId: 'q3', question: 'Which technique is commonly used to prevent indefinite blocking (starvation) in priority scheduling?', options: ['Aging (gradually increasing priority of waiting processes)', 'Decreasing the time quantum', 'Switching to non-preemptive mode', 'Spooling'], correct: 0, explanation: 'Aging gradually increases the priority of processes that wait in the system for long periods.' },
+
+  // q4: Discrete Math — Graph Theory
+  { id: 'qq16', quizId: 'q4', question: 'A connected graph has an Eulerian circuit if and only if:', options: ['Every vertex has an even degree', 'Exactly two vertices have odd degree', 'It is a bipartite complete graph', 'It contains no cycles'], correct: 0, explanation: 'Euler proved that a connected graph has an Eulerian circuit if and only if every vertex has an even degree.' },
+  { id: 'qq17', quizId: 'q4', question: 'How many edges does a tree with n vertices have?', options: ['n', 'n - 1', 'n + 1', 'n * (n - 1) / 2'], correct: 1, explanation: 'A basic theorem of trees states that any tree on n vertices has exactly n - 1 edges.' },
+  { id: 'qq18', quizId: 'q4', question: 'A Hamiltonian cycle in a graph is a closed loop that visits:', options: ['Every edge exactly once', 'Every vertex exactly once (except start/end)', 'Only vertices of odd degree', 'The minimum spanning tree edges'], correct: 1, explanation: 'A Hamiltonian cycle visits every vertex of the graph exactly once and returns to the start vertex.' },
+  { id: 'qq19', quizId: 'q4', question: 'What is the maximum number of edges in a simple undirected graph with n vertices?', options: ['n', 'n * (n - 1) / 2', '2^n', 'n!'], correct: 1, explanation: 'The complete graph Kn has n choose 2 = n*(n-1)/2 edges.' },
+  { id: 'qq20', quizId: 'q4', question: 'A graph is bipartite if and only if it does NOT contain any:', options: ['Cycles of odd length', 'Self loops', 'Even cycles', 'Cut vertices'], correct: 0, explanation: 'König theorem states that a graph is 2-colorable (bipartite) iff it contains no odd cycles.' },
+
+  // q5: ML Foundations Quiz (Unattempted)
+  { id: 'qq21', quizId: 'q5', question: 'What distinguishes Supervised Learning from Unsupervised Learning?', options: ['Supervised uses labeled training data with ground-truth targets', 'Supervised requires neural networks with backpropagation', 'Supervised learning does not need loss functions', 'Unsupervised learning only works on numerical data'], correct: 0, explanation: 'Supervised learning trains on pairs of inputs and target labels to learn a mapping function.' },
+  { id: 'qq22', quizId: 'q5', question: 'Which problem occurs when a model performs extremely well on training data but poorly on unseen test data?', options: ['High Bias (Underfitting)', 'High Variance (Overfitting)', 'Vanishing Gradient', 'Data Leakage'], correct: 1, explanation: 'Overfitting occurs when a model memorizes noise and specific patterns in the training data rather than generalizing.' },
+  { id: 'qq23', quizId: 'q5', question: 'What loss function is most commonly used for Linear Regression?', options: ['Categorical Cross-Entropy', 'Mean Squared Error (MSE)', 'Hinge Loss', 'Kullback-Leibler Divergence'], correct: 1, explanation: 'Mean Squared Error measures the average of the squares of errors between predicted and actual values.' },
+  { id: 'qq24', quizId: 'q5', question: 'Logistic Regression is primarily used for which type of task?', options: ['Continuous value prediction', 'Binary Classification', 'Dimensionality Reduction', 'Clustering'], correct: 1, explanation: 'Logistic regression applies a sigmoid activation to model probabilities for binary classification tasks.' },
+  { id: 'qq25', quizId: 'q5', question: 'In Gradient Descent, what parameter controls the size of steps taken towards the minimum of the loss function?', options: ['Regularization parameter (lambda)', 'Learning rate (alpha)', 'Momentum constant', 'Batch size'], correct: 1, explanation: 'The learning rate alpha determines the step size taken along the negative gradient direction.' },
 ];
 
 export const quizResults = [

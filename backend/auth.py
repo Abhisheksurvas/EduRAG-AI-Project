@@ -291,11 +291,21 @@ def filter_materials_for_role(
                 continue
             if m.get("studentId") == user_id or m.get("uploadedBy") == user_id:
                 result.append(m)
-                seen.add(mid)
+                if mid:
+                    seen.add(mid)
+                continue
+            # Include general/unassigned study material (no courseId or uploaded for study/quiz)
+            c_id = m.get("courseId") or ""
+            c_name = str(m.get("course") or "").lower()
+            if not c_id or c_id in ("", "none", "general", "all") or "quiz" in c_name or "study" in c_name or "personal" in c_name or m.get("status") in ("ready", "approved", "processing"):
+                result.append(m)
+                if mid:
+                    seen.add(mid)
                 continue
             if enrolled_course_ids and m.get("courseId") in enrolled_course_ids:
                 result.append(m)
-                seen.add(mid)
+                if mid:
+                    seen.add(mid)
                 continue
         student_dept = payload.get("branch") or payload.get("department") or ""
         student_year = payload.get("classYear") or payload.get("year") or ""
@@ -305,7 +315,8 @@ def filter_materials_for_role(
                 continue
             if _material_matches_student(m, student_dept, student_year):
                 result.append(m)
-                seen.add(mid)
+                if mid:
+                    seen.add(mid)
         return result
 
     return []
@@ -433,13 +444,30 @@ def _load_enrollments(
     mongo_db=None,
     memory_store: dict | None = None,
 ) -> list[dict]:
-    if mongo_db is not None:
+    # Circuit breaker: skip MongoDB when the cluster is unreachable
+    try:
+        from app import _mongo_available, _mongo_success, _mongo_failure
+        mongo_ok = _mongo_available()
+    except Exception:
+        mongo_ok = mongo_db is not None
+
+    if mongo_ok and mongo_db is not None:
         try:
             docs = list(mongo_db["enrollments"].find(query, {"_id": 0}))
             for d in docs:
                 d.pop("_id", None)
+            try:
+                from app import _mongo_success
+                _mongo_success()
+            except Exception:
+                pass
             return docs
         except Exception as exc:
+            try:
+                from app import _mongo_failure
+                _mongo_failure()
+            except Exception:
+                pass
             print(f"[Auth] Enrollment load failed: {exc}")
 
     if memory_store is not None:

@@ -153,6 +153,10 @@ export function clearCurrentAccount() {
     window.localStorage.removeItem('edurag-auth-token');
     // Clear chat history cache to prevent cross-account leakage
     window.localStorage.removeItem('edurag-chat-history');
+    // Clear global unpartitioned keys if any legacy keys lingered
+    window.localStorage.removeItem('edurag-quizzes');
+    window.localStorage.removeItem('edurag-quiz-questions');
+    window.localStorage.removeItem('edurag-quiz-results');
   }
 }
 
