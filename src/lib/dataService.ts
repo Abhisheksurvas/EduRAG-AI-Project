@@ -15,6 +15,7 @@ import {
   documents,
   quizzes,
   quizQuestions,
+  generatedNotes,
   type Course,
   type DocumentItem,
   type Quiz,
@@ -223,12 +224,25 @@ export async function findMaterialsByTopic(topic: string): Promise<any[]> {
 
 // ============ NOTES ============
 
+import { generateAcademicNotes, type NoteType } from './notesGeneratorKnowledge';
+
 export async function fetchNotes() {
   const data = await apiGet<any[]>('/api/notes');
-  if (data && Array.isArray(data)) {
+  if (data && Array.isArray(data) && data.length > 0) {
     return data;
   }
-  return [];
+  // Fallback: check localStorage, otherwise supply pre-seeded academic notes
+  try {
+    if (typeof window !== 'undefined') {
+      const stored = JSON.parse(window.localStorage.getItem('edurag-notes') || '[]');
+      if (Array.isArray(stored) && stored.length > 0) {
+        return stored;
+      }
+    }
+  } catch {
+    // continue
+  }
+  return generatedNotes;
 }
 
 export async function createNote(note: any): Promise<boolean> {
@@ -255,116 +269,63 @@ export async function updateNote(note: any): Promise<boolean> {
 }
 
 export async function deleteNote(id: string): Promise<boolean> {
+  try {
+    if (typeof window !== 'undefined') {
+      const stored = JSON.parse(window.localStorage.getItem('edurag-notes') || '[]');
+      if (Array.isArray(stored)) {
+        const filtered = stored.filter((n: any) => n.id !== id);
+        window.localStorage.setItem('edurag-notes', JSON.stringify(filtered));
+      }
+    }
+  } catch (err) {
+    console.warn('[DataService] Failed to remove note from localStorage:', err);
+  }
   return apiDelete('/api/notes', [id]);
 }
 
-export function generateClientFallbackNotes(topic: string, type: string, context?: string): string {
-  const cleanTopic = (topic || 'Study Topic').trim();
-  const formatTitles: Record<string, string> = {
-    summary: 'Chapter Summary',
-    keypoints: 'Key Points',
-    definitions: 'Definitions & Terminology',
-    formulas: 'Formula Sheet & Reference Guide',
-  };
-  const label = formatTitles[type] || 'Study Notes';
-
-  if (type === 'summary') {
-    return `# 📚 ${label}: ${cleanTopic}
-
-## 1. Executive Overview
-**${cleanTopic}** is a core curricular topic fundamental to technical competence and exam readiness. It establishes the theoretical basis and operational framework needed for robust system comprehension. Mastering ${cleanTopic} equips students with the ability to analyze tradeoffs, optimize resource usage, and solve real-world engineering challenges.
-
-## 2. Core Concepts & Architecture
-- **Foundational Architecture**: The overarching structure, internal modules, and functional layers governing ${cleanTopic}.
-- **Interface & Abstraction**: Clean separation between internal mechanics and external caller contracts.
-- **State Management & Data Flow**: Lifecycle progression from input parsing, verification, and transformation to final delivery.
-- **Operational Guarantees**: Reliability constraints, error boundaries, and concurrency handling.
-
-${context ? `## 📄 Source Notes Reference\n${context}\n` : ''}
-## 3. Sequential Workflow & Execution Process
-1. **Prerequisite Check**: Validating input criteria and establishing consistent initialization parameters.
-2. **Core Processing**: Executing business logic, traversing intermediate representations, and enforcing invariants.
-3. **Boundary & Error Management**: Intercepting exceptional states, applying fallback behaviors, and preventing resource leakage.
-4. **Final State Commitment**: Persisting outcomes, releasing allocated resources, and returning structured status.
-
-## 4. Key Takeaways & Exam Highlights
-- Remember the critical tradeoffs: performance vs. memory footprint, simplicity vs. customization.
-- Always verify edge scenarios (empty inputs, peak thresholds, concurrent access) in exam answers.
-- Use precise technical terminology when writing definitions and analytical explanations.`;
+export async function deleteAllNotes(ids?: string[]): Promise<boolean> {
+  try {
+    if (typeof window !== 'undefined') {
+      if (ids && ids.length > 0) {
+        const stored = JSON.parse(window.localStorage.getItem('edurag-notes') || '[]');
+        if (Array.isArray(stored)) {
+          const filtered = stored.filter((n: any) => !ids.includes(n.id));
+          window.localStorage.setItem('edurag-notes', JSON.stringify(filtered));
+        }
+      } else {
+        window.localStorage.removeItem('edurag-notes');
+      }
+    }
+  } catch (err) {
+    console.warn('[DataService] Failed to clear local notes:', err);
   }
-
-  if (type === 'keypoints') {
-    return `# 🎯 ${label}: ${cleanTopic}
-
-## 📌 Essential Concepts to Master
-1. **Core Principle**: ${cleanTopic} relies on structured modularity, deterministic state transitions, and strict boundary validation.
-2. **Primary Functionality**: Streamlines processing pipeline, mitigates bottlenecks, and guarantees systemic stability.
-3. **State Invariants**: Fundamental invariants and constraints that must hold true before, during, and after operations.
-4. **Complexity Characteristics**: Understanding behavioral efficiency when scale ($N$) expands.
-5. **Robustness & Edge Handling**: Gracefully handling null references, unexpected input ranges, and connection drops.
-6. **Industry Standard Patterns**: Proven design paradigms and architectural implementations used in modern systems.
-
-${context ? `## 📄 Verified Material Highlights\n${context}\n` : ''}
-## ⚠️ Critical Pitfalls & Common Exam Traps
-- **Trap 1**: Confusing worst-case asymptotic bounds with expected average-case performance.
-- **Trap 2**: Overlooking zero-based index offsets and boundary condition validation.
-- **Trap 3**: Failing to release locks, file handles, or allocated memory pools.
-- **Trap 4**: Misjudging latency overheads in distributed network environments.
-
-## 💡 Best Practices & Practical Tips
-- Construct unit and integration test assertions covering edge boundaries.
-- Adhere strictly to the separation of concerns between business logic and input/output handlers.`;
+  if (ids && ids.length > 0) {
+    return apiDelete('/api/notes', ids);
   }
+  return true;
+}
 
-  if (type === 'definitions') {
-    return `# 📖 ${label}: ${cleanTopic}
+export function generateClientFallbackNotes(topic: string, type: string, context?: string): { title: string; content: string } {
+  const normType = (type || 'summary') as NoteType;
+  return generateAcademicNotes(topic, normType, context);
+}
 
-## 🏷️ Essential Definitions & Terms
-- **${cleanTopic}**: The core discipline or system mechanism that coordinates structured operations and data transformations.
-- **Abstraction**: Isolating high-level interfaces from low-level implementation complexities to reduce cognitive load.
-- **Modularity**: Partitioning a larger system into independent, interchangeable, and easily testable units.
-- **Determinism**: The property wherein an identical sequence of inputs reliably produces the exact same output.
-- **State Invariant**: A non-negotiable logical condition that always evaluates to true across valid execution states.
-- **Throughput**: The aggregate quantity of work or computational units completed per unit of measurement.
-- **Latency**: The elapsed time between the issuance of an instruction and the observation of its complete result.
-- **Concurrency**: The interleaving execution of independent computation sequences without altering correctness.
-- **Fault Tolerance**: The systemic capability to sustain operational fidelity in the presence of unexpected failures.
-
-${context ? `## 📄 Context Terminology\n${context}\n` : ''}
-## 🔍 Comparative Terminology
-- **Synchronous vs. Asynchronous**: Synchronous workflows wait for immediate task completion; asynchronous workflows dispatch tasks and resume processing.
-- **Throughput vs. Latency**: Throughput measures volume per time; latency measures turnaround speed for a single request.
-- **Static vs. Dynamic**: Static properties are immutable once declared; dynamic properties mutate according to runtime environment.`;
+export async function notifyDocumentSelected(id: string, name: string): Promise<boolean> {
+  try {
+    const token = typeof window !== 'undefined' ? window.localStorage.getItem('edurag-auth-token') : null;
+    const res = await fetch('http://localhost:8000/api/notes/select-document', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ id, name }),
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn('[DataService] Document selection notify failed:', err);
+    return false;
   }
-
-  // formulas
-  return `# 📐 ${label}: ${cleanTopic}
-
-## ⚡ Core Formulas, Equations & Identities
-- **System Efficiency ($E$)**:
-  $$E = \\frac{\\text{Useful Work Output}}{\\text{Total Energy / Time Input}} \\times 100\\%$$
-- **Amdahl's Law (Speedup $S$)**:
-  $$S(p) = \\frac{1}{(1 - f) + \\frac{f}{p}}$$
-  *(Where $f$ is parallelizable fraction, $p$ is processor count)*
-- **Little's Law (Queueing Dynamics)**:
-  $$L = \\lambda \\times W$$
-  *(Where $L$ is average items in system, $\\lambda$ is arrival rate, $W$ is average waiting duration)*
-- **Entropy & Information Density ($H$)**:
-  $$H(X) = -\\sum_{i=1}^n P(x_i) \\log_2 P(x_i)$$
-
-## ⏱️ Algorithmic Complexities & Bounds
-| Operation / Scenario | Best Case | Average Case | Worst Case | Space Complexity |
-| :--- | :--- | :--- | :--- | :--- |
-| Lookup / Access | $O(1)$ | $O(1)$ or $O(\\log N)$ | $O(N)$ | $O(1)$ |
-| Search | $O(1)$ | $O(\\log N)$ | $O(N)$ | $O(1)$ |
-| Insertion / Update | $O(1)$ | $O(\\log N)$ | $O(N)$ | $O(1)$ |
-| Traversal / Sort | $O(N)$ | $O(N \\log N)$ | $O(N^2)$ | $O(N)$ or $O(1)$ |
-
-## 🔢 Variable & Parameter Glossary
-- $N$: Scale of problem or input element count.
-- $T(N)$: Computation runtime as a function of element size $N$.
-- $S(N)$: Auxiliary memory required beyond basic input storage.
-- $\\lambda$: Mean request arrival rate per unit time.`;
 }
 
 export async function generateNotesService(params: {
@@ -372,15 +333,18 @@ export async function generateNotesService(params: {
   type: string;
   materialIds?: string[];
   context?: string;
+  documentName?: string;
+  selectedDocumentName?: string;
 }): Promise<{ success: boolean; content: string; title: string }> {
   const titles: Record<string, string> = {
     summary: 'Chapter Summary',
     keypoints: 'Key Points',
-    definitions: 'Definitions',
-    formulas: 'Formula Sheet',
+    definitions: 'Definitions & Terminology',
+    formulas: 'Formula Sheet & Reference Guide',
   };
-  const label = titles[params.type] || 'Notes';
-  const cacheKey = `${params.topic.trim().toLowerCase()}::${params.type}::${(params.materialIds || []).sort().join(',')}`;
+  const label = titles[params.type] || 'Study Notes';
+  const cleanTopic = params.topic.trim();
+  const cacheKey = `${cleanTopic.toLowerCase()}::${params.type}::${(params.materialIds || []).sort().join(',')}`;
 
   if (typeof window !== 'undefined' && (window as any).__notesClientCache?.has(cacheKey)) {
     return (window as any).__notesClientCache.get(cacheKey);
@@ -388,7 +352,7 @@ export async function generateNotesService(params: {
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3500);
+    const timeoutId = setTimeout(() => controller.abort(), 16000);
     const token = typeof window !== 'undefined' ? window.localStorage.getItem('edurag-auth-token') : null;
     const res = await fetch('http://localhost:8000/api/notes/generate', {
       method: 'POST',
@@ -402,11 +366,17 @@ export async function generateNotesService(params: {
     clearTimeout(timeoutId);
     if (res.ok) {
       const data = await res.json();
-      if (data && data.content && String(data.content).trim().length > 40) {
+      const rawContent = data?.content ? String(data.content).trim() : '';
+      const isUnavailable =
+        rawContent.toLowerCase().includes('the ai provider is currently unavailable') ||
+        rawContent.toLowerCase().includes('your question is about') ||
+        rawContent.toLowerCase().includes('not included in the local study knowledge base');
+
+      if (rawContent && rawContent.length > 80 && !isUnavailable) {
         const result = {
           success: true,
-          content: data.content,
-          title: data.title || `${label} — ${params.topic}`,
+          content: rawContent,
+          title: data.header || data.title || `${label}: ${cleanTopic}`,
         };
         if (typeof window !== 'undefined') {
           if (!(window as any).__notesClientCache) (window as any).__notesClientCache = new Map();
@@ -416,15 +386,15 @@ export async function generateNotesService(params: {
       }
     }
   } catch (err) {
-    console.warn('[DataService] API notes generate took >3.5s or failed, generating fast notes instantly:', err);
+    console.warn('[DataService] API notes generate took >12s or failed; using high-yield academic knowledge engine:', err);
   }
 
-  // Ultra-fast client-side generation
-  const content = generateClientFallbackNotes(params.topic, params.type, params.context);
+  // Fast, accurate, high-yield academic generation
+  const generated = generateAcademicNotes(cleanTopic, (params.type || 'summary') as NoteType, params.context);
   const fallbackResult = {
     success: true,
-    content,
-    title: `${label} — ${params.topic}`,
+    content: generated.content,
+    title: generated.title || `${label}: ${cleanTopic}`,
   };
   if (typeof window !== 'undefined') {
     if (!(window as any).__notesClientCache) (window as any).__notesClientCache = new Map();

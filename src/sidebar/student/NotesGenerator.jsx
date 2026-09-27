@@ -5,6 +5,7 @@ import {
   Eye, Trash2, Clock, BookOpen, FileDown, Database,
 } from 'lucide-react';
 import { Card, CardHeader, CardBody } from '@/components/ui';
+import { notifyDocumentSelected } from '@/lib/dataService';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB per file
@@ -59,7 +60,18 @@ export default function NotesGenerator() {
   const [recentNotes, setRecentNotes]     = useState<RecentNote[]>([]);
   const [indexedMaterials, setIndexedMaterials] = useState<{ id: string; name: string }[]>([]);
   const [selectedIndexedId, setSelectedIndexedId] = useState<string>('all');
+  const [selectedPrompt, setSelectedPrompt] = useState<string | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const promptOptions = [
+    'Summarize this into five key takeaways',
+    'Create a concise meeting minutes draft from this',
+    'Make 10 flashcards from this material',
+    'Build a timeline and milestones from this',
+    'Explain this in simple terms for a beginner',
+    'Compare the main options presented here',
+  ];
 
   // Load already-indexed materials on mount and periodically
   useEffect(() => {
@@ -213,15 +225,21 @@ export default function NotesGenerator() {
               }
               attempt++;
               try {
+                const ctrl = new AbortController();
+                const timer = setTimeout(() => ctrl.abort(), 3000);
                 const statusRes = await fetch(
-                  `http://localhost:8000/api/materials/status?id=${data.material.id}`,
-                  { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+                  `http://localhost:8000/api/materials/status?id=${encodeURIComponent(data.material.id)}&name=${encodeURIComponent(file.name)}`,
+                  {
+                    headers: token ? { Authorization: `Bearer ${token}` } : {},
+                    signal: ctrl.signal,
+                  },
                 );
-                if (!statusRes.ok) { setTimeout(poll, 500); return; }
+                clearTimeout(timer);
+                if (!statusRes.ok) { setTimeout(poll, 600); return; }
                 const statusData = await statusRes.json();
-                if (statusData.status === 'ready') {
+                if (statusData.status === 'ready' || statusData.ready || (statusData.chunks && statusData.chunks > 0)) {
                   setUploadedFiles(prev =>
-                    prev.map(f => (f.id === data.material.id ? { ...f, status: 'ready' } : f)),
+                    prev.map(f => (f.id === data.material.id || f.name.toLowerCase() === file.name.toLowerCase() ? { ...f, status: 'ready' } : f)),
                   );
                   pushToast(`"${file.name}" indexed successfully.`, 'success');
                 } else if (statusData.status === 'failed') {
@@ -230,10 +248,10 @@ export default function NotesGenerator() {
                   );
                   pushToast(`Indexing failed for "${file.name}".`, 'error');
                 } else {
-                  setTimeout(poll, 500);
+                  setTimeout(poll, 600);
                 }
               } catch {
-                setTimeout(poll, 500);
+                setTimeout(poll, 600);
               }
             };
             setTimeout(poll, 500);
@@ -258,8 +276,8 @@ export default function NotesGenerator() {
 
   // ── Generate Summary ───────────────────────────────────────────────────────
   const handleGenerate = useCallback(async () => {
-    if (!topic.trim() && !rawText.trim() && uploadedFiles.length === 0 && !selectedIndexedId) {
-      pushToast('Please enter a topic, select an indexed document, paste some text, or upload a file first.', 'error');
+    if (!topic.trim()) {
+      pushToast('Course / Topic / Chapter is compulsory. Please enter a unit or chapter (e.g. Unit-2).', 'error');
       return;
     }
     setIsGenerating(true);
@@ -298,6 +316,14 @@ export default function NotesGenerator() {
     pushToast('Note deleted.', 'success');
   }, [pushToast]);
 
+  const handleDeleteAllNotes = useCallback(() => {
+    if (recentNotes.length === 0) return;
+    if (window.confirm(`Are you sure you want to delete all ${recentNotes.length} recently generated notes?`)) {
+      setRecentNotes([]);
+      pushToast('All recent notes deleted.', 'success');
+    }
+  }, [recentNotes.length, pushToast]);
+
   // ── Derived state ──────────────────────────────────────────────────────────
   const atLimit = uploadedFiles.length >= MAX_FILES;
 
@@ -324,18 +350,6 @@ export default function NotesGenerator() {
             <CardHeader title="Create Study Notes" icon={StickyNote} />
             <CardBody className="space-y-4">
 
-              {/* Course / Topic */}
-              <div className="space-y-2">
-                <label className="text-sm font-semibold text-neutral-700">Course / Topic</label>
-                <input
-                  type="text"
-                  value={topic}
-                  onChange={e => setTopic(e.target.value)}
-                  placeholder="e.g. Design & Analysis of Algorithms"
-                  className="w-full p-2.5 border border-neutral-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white"
-                />
-              </div>
-
               {/* Select already-indexed document */}
               <div className="space-y-2">
                 <label className="text-sm font-semibold text-neutral-700 flex items-center gap-1.5">
@@ -345,7 +359,13 @@ export default function NotesGenerator() {
                 </label>
                 <select
                   value={selectedIndexedId}
-                  onChange={e => setSelectedIndexedId(e.target.value)}
+                  onChange={e => {
+                    const id = e.target.value;
+                    setSelectedIndexedId(id);
+                    const selectedMat = indexedMaterials.find(m => m.id === id);
+                    const docName = id === 'all' ? 'All Indexed Documents' : (selectedMat?.name || id);
+                    notifyDocumentSelected(id, docName).catch(console.warn);
+                  }}
                   className="w-full p-2.5 border border-neutral-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white text-sm"
                 >
                   <option value="all">All doc.</option>
@@ -353,11 +373,39 @@ export default function NotesGenerator() {
                     <option key={m.id} value={m.id}>{m.name}</option>
                   ))}
                 </select>
+                {selectedIndexedId && (
+                  <div className="flex items-center justify-between p-2 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-900">
+                    <span className="truncate">
+                      Selected: <strong>{selectedIndexedId === 'all' ? 'All Indexed Documents' : (indexedMaterials.find(m => m.id === selectedIndexedId)?.name || selectedIndexedId)}</strong>
+                    </span>
+                    <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-medium">
+                      Active
+                    </span>
+                  </div>
+                )}
                 {indexedMaterials.length === 0 && (
                   <p className="text-xs text-neutral-400">
                     Upload a document below to index it, then it will appear here on your next visit.
                   </p>
                 )}
+              </div>
+
+              {/* Course / Topic / Chapter (Compulsory) — directly below Select Document Already Indexed */}
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-neutral-700 flex items-center justify-between">
+                  <span>
+                    Course / Topic / Chapter <span className="text-rose-600 font-bold">* (Compulsory)</span>
+                  </span>
+                  <span className="text-xs text-neutral-400 font-normal">e.g. Unit-2, Decision Trees</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={topic}
+                  onChange={e => setTopic(e.target.value)}
+                  placeholder="e.g. Unit-2, Chapter 4, Decision Trees (Compulsory)"
+                  className="w-full p-2.5 border border-neutral-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white text-sm"
+                />
               </div>
 
               {/* Note type */}
@@ -374,6 +422,58 @@ export default function NotesGenerator() {
                   <option>Flashcards</option>
                   <option>Study Guide</option>
                 </select>
+              </div>
+
+              {/* Pick a Prompt section */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-semibold text-neutral-700">
+                    Pick a Prompt
+                  </label>
+                  {selectedPrompt && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPrompt(null)}
+                      className="text-xs text-neutral-400 hover:text-neutral-600 underline cursor-pointer"
+                    >
+                      Clear prompt
+                    </button>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  {promptOptions.map((promptText) => {
+                    const isPromptSelected = selectedPrompt === promptText;
+                    return (
+                      <button
+                        key={promptText}
+                        type="button"
+                        onClick={() => {
+                          setSelectedPrompt(prev => prev === promptText ? null : promptText);
+                        }}
+                        className={`w-full flex items-center justify-between p-3 rounded-xl border text-xs sm:text-sm text-left transition-all cursor-pointer group ${
+                          isPromptSelected
+                            ? 'border-emerald-500 bg-emerald-50/80 text-emerald-950 font-medium ring-1 ring-emerald-500 shadow-xs'
+                            : 'border-neutral-200/90 bg-white text-neutral-700 hover:border-neutral-300 hover:bg-neutral-50/80 hover:text-neutral-900'
+                        }`}
+                      >
+                        <span className="flex-1 pr-3 leading-snug">
+                          {promptText}
+                        </span>
+                        <span className={`shrink-0 transition-transform ${
+                          isPromptSelected
+                            ? 'text-emerald-600'
+                            : 'text-neutral-400 group-hover:text-emerald-600 group-hover:translate-x-0.5'
+                        }`}>
+                          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M5 5v6a4 4 0 0 0 4 4h10" />
+                            <path d="m15 11 4 4-4 4" />
+                          </svg>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               {/* File upload */}
@@ -403,32 +503,79 @@ export default function NotesGenerator() {
                   multiple
                   onChange={handleFileUpload}
                   disabled={isUploading || atLimit}
+                  accept=".pdf,.pptx,.docx,.txt,.md,.csv,.ppt,.png,.jpg,.jpeg,.mp3,.wav,.m4a,.ogg,.mp4,.webm,.mov,audio/*,video/*,image/*,text/*"
                 />
 
-                {/* Upload button */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (atLimit) {
-                      pushToast('Maximum 10 files allowed. Remove a file before adding more.', 'error');
-                      return;
+                {/* Dashed upload drop-zone */}
+                <div
+                  onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragOver(true); }}
+                  onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragOver(true); }}
+                  onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragOver(false); }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setIsDragOver(false);
+                    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                      handleFileUpload({ target: { files: e.dataTransfer.files, value: '' } } as any);
                     }
-                    fileInputRef.current?.click();
                   }}
-                  disabled={isUploading || atLimit}
-                  className="w-full flex items-center justify-center gap-2 h-11 px-4 rounded-xl border border-dashed border-neutral-300 text-sm font-semibold text-neutral-600 hover:border-primary-400 hover:text-primary-700 hover:bg-primary-50/50 transition-all disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={() => {
+                    if (!isUploading && !atLimit) {
+                      fileInputRef.current?.click();
+                    }
+                  }}
+                  className={`relative w-full rounded-2xl border-2 border-dashed transition-all cursor-pointer p-6 md:p-8 flex flex-col items-center justify-center text-center group ${
+                    isDragOver
+                      ? 'border-emerald-500 bg-emerald-50/70 scale-[1.01]'
+                      : 'border-emerald-300/80 hover:border-emerald-500 bg-emerald-50/20 hover:bg-emerald-50/40'
+                  }`}
                 >
-                  {isUploading
-                    ? <LoaderCircle className="h-4 w-4 animate-spin" />
-                    : <Paperclip className="h-4 w-4" />}
-                  {isUploading
-                    ? 'Uploading…'
-                    : atLimit
-                      ? '10 files maximum reached'
-                      : uploadedFiles.length > 0
-                        ? 'Add more files (any type)'
-                        : 'Upload any file type — up to 10 files'}
-                </button>
+                  {/* 3 Overlapping squircle tiles */}
+                  <div className="relative flex items-center justify-center w-28 h-20 mb-3 select-none pointer-events-none">
+                    <div className="absolute left-1.5 w-12 h-12 rounded-2xl bg-[#ede9fe] text-[#7c3aed] flex items-center justify-center shadow-xs -rotate-8 transform transition-transform group-hover:-rotate-12">
+                      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M9 18V5l12-2v13" />
+                        <circle cx="6" cy="18" r="3" />
+                        <circle cx="18" cy="16" r="3" />
+                      </svg>
+                    </div>
+                    <div className="absolute right-1.5 w-12 h-12 rounded-2xl bg-[#ede9fe] text-[#7c3aed] flex items-center justify-center shadow-xs rotate-8 transform transition-transform group-hover:rotate-12">
+                      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+                        <circle cx="9" cy="9" r="2" />
+                        <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+                      </svg>
+                    </div>
+                    <div className="relative z-10 w-14 h-14 rounded-2xl bg-[#ffedd5] text-[#ea580c] flex items-center justify-center shadow-md border border-[#fed7aa]/60 transform transition-transform group-hover:scale-105">
+                      <svg className="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                        <polyline points="14 2 14 8 20 8" />
+                        <line x1="16" y1="13" x2="8" y2="13" />
+                        <line x1="16" y1="17" x2="8" y2="17" />
+                        <line x1="10" y1="9" x2="8" y2="9" />
+                      </svg>
+                    </div>
+                  </div>
+
+                  <h3 className="text-base md:text-lg font-bold text-neutral-900 tracking-tight">
+                    Drag your notes here
+                  </h3>
+                  <p className="text-xs text-neutral-500 mt-1 max-w-xs leading-relaxed">
+                    PDF, audio, video, images or text — any language.
+                  </p>
+
+                  <button
+                    type="button"
+                    className="mt-3 inline-flex items-center gap-1.5 text-xs md:text-sm font-semibold text-emerald-600 group-hover:text-emerald-700 group-hover:underline cursor-pointer"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      fileInputRef.current?.click();
+                    }}
+                  >
+                    <span>Or browse your files</span>
+                    <span className="text-sm leading-none">→</span>
+                  </button>
+                </div>
 
                 {/* File list */}
                 {uploadedFiles.length > 0 && (
@@ -530,9 +677,22 @@ export default function NotesGenerator() {
 
       {/* ── Recently Generated Notes section ── */}
       <div className="space-y-4">
-        <div className="flex items-center gap-2">
-          <BookOpen className="h-5 w-5 text-primary-600" />
-          <h2 className="text-xl font-bold font-display text-neutral-900">Recently Generated Notes</h2>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <BookOpen className="h-5 w-5 text-primary-600" />
+            <h2 className="text-xl font-bold font-display text-neutral-900">Recently Generated Notes</h2>
+          </div>
+          {recentNotes.length > 0 && (
+            <button
+              type="button"
+              onClick={handleDeleteAllNotes}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-error-600 border border-error-200 bg-white hover:bg-error-50 hover:border-error-300 transition-colors shadow-2xs cursor-pointer"
+              title="Delete all recent notes"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete All
+            </button>
+          )}
         </div>
 
         {recentNotes.length === 0 ? (

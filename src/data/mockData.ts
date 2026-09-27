@@ -218,9 +218,77 @@ export type Note = {
 
 export const generatedNotes: Note[] = [
   {
-    id: 'note1', title: 'Graph Algorithms — Chapter Summary', type: 'summary', course: 'CS501', chapter: 'Graph Traversal',
-    content: 'This chapter covers fundamental graph traversal techniques including BFS and DFS, their implementations, complexity analysis, and applications. BFS uses a queue and is optimal for unweighted shortest paths. DFS uses recursion/stack and is essential for cycle detection, topological sort, and strongly connected components. The chapter also introduces Dijkstra\'s algorithm for weighted shortest paths and Kruskal\'s/Prim\'s for minimum spanning trees.',
-    createdAt: '2 days ago',
+    id: 'note1',
+    title: 'Chapter Summary: Graph Algorithms & Traversal (BFS & DFS)',
+    type: 'summary',
+    course: 'CS501 — Data Structures & Algorithms',
+    chapter: 'Graph Traversal — BFS & DFS',
+    content: `# 📚 Chapter Summary: Graph Algorithms & Traversal (BFS & DFS)
+
+**Topic / Chapter:** Graph Traversal — BFS & DFS  
+**Course:** CS501 — Data Structures & Algorithms  
+**Note Type:** Chapter Summary  
+**Source Material:** Graph Algorithms — Complete Notes (Dr. Priya Nair)  
+---
+
+## 1. Executive Overview & Scope
+Graph Traversal is the foundational computational process of systematically visiting every vertex in a graph $G = (V, E)$ exactly once. Unlike tree data structures, general graphs can contain arbitrary cycles, self-loops, and multiple disjoint components, requiring robust visited state tracking to prevent infinite loops. The two primary graph exploration paradigms are **Breadth-First Search (BFS)** and **Depth-First Search (DFS)**, which underpin shortest path finding, topological sorting, connected component identification, and network routing.
+
+## 2. Core Concepts & Theoretical Principles
+- **Graph Representation**: Adjacency Lists require $O(|V| + |E|)$ memory and offer optimal iteration over neighbors for sparse graphs. Adjacency Matrices take $O(|V|^2)$ space and allow $O(1)$ edge queries, but are inefficient for sparse graphs.
+- **Breadth-First Search (BFS)**: Explores concentric frontiers layer by layer using a First-In-First-Out (FIFO) queue. It provably finds the shortest path in unweighted graphs in $O(|V| + |E|)$ time.
+- **Depth-First Search (DFS)**: Drives as deeply as possible along each path before backtracking, utilizing a Last-In-First-Out (LIFO) stack or system recursion. Edge classification during DFS identifies Tree edges, Back edges (signaling cycles), Forward edges, and Cross edges.
+- **Topological Sorting**: A linear ordering of vertices in a Directed Acyclic Graph (DAG) such that for every directed edge $(u, v)$, $u$ precedes $v$. Computed via DFS finish times or Kahn's in-degree queue algorithm.
+- **Single-Source Shortest Paths**: Dijkstra's algorithm uses a greedy priority queue approach to find shortest paths in non-negative weighted graphs in $O((|V| + |E|) \\log |V|)$.
+
+## 3. Key Mechanisms, Algorithms & Step-by-Step Execution
+1. **BFS Initialization**: Initialize a boolean array \`visited\` of size $|V|$ to \`false\` and an empty FIFO queue $Q$. Enqueue the start vertex $s$, mark \`visited[s] = true\`, and set \`dist[s] = 0\`.
+2. **BFS Layer Expansion**: While $Q$ is not empty, dequeue $u$. For each neighbor $v \\in \\text{adj}[u]$, if \`!visited[v]\`, mark \`visited[v] = true\`, set \`dist[v] = dist[u] + 1\`, record \`parent[v] = u\`, and enqueue $v$.
+3. **DFS Recursive Traversal**: Call \`DFS(u)\`: mark \`visited[u] = true\`. For each adjacent vertex $v \\in \\text{adj}[u]$, if \`!visited[v]\`, record $(u, v)$ as a tree edge and recurse \`DFS(v)\`. Backtrack when all incident edges are explored.
+4. **Cycle Detection Protocol**: In directed graphs, maintain 3 vertex colors: White (unvisited), Gray (active in call stack), and Black (completed). Encountering a Gray node confirms a cycle (Back Edge).
+
+## 4. High-Yield Exam Highlights & Takeaways
+- BFS guarantees shortest paths in unweighted graphs; DFS does NOT guarantee shortest path.
+- DFS memory footprint is bounded by maximum path depth $O(|V|)$; BFS memory is bounded by the widest frontier $O(|V|)$.
+- Handshaking Lemma: In any undirected graph, $\\sum_{v \\in V} \\deg(v) = 2|E|$, meaning the count of odd-degree vertices must be even.
+- Dijkstra's algorithm fails with negative edge weights; use the Bellman-Ford algorithm ($O(|V| \\cdot |E|)$) instead.`,
+    createdAt: '2 hours ago',
+  },
+  {
+    id: 'note2',
+    title: 'Key Points: Process Management & CPU Scheduling',
+    type: 'keypoints',
+    course: 'CS505 — Operating Systems',
+    chapter: 'Process Scheduling & Synchronization',
+    content: `# 🎯 Key Points: Process Management & CPU Scheduling
+
+**Topic / Chapter:** Process Scheduling & Synchronization  
+**Course:** CS505 — Operating Systems  
+**Note Type:** Key Points  
+**Source Material:** Process Scheduling — Lab Manual (Dr. Vikram Singh)  
+---
+
+## 📌 Essential Concepts & High-Yield Key Points
+1. **Process Definition**: A process is an active program in execution represented in the OS kernel by a Process Control Block (PCB).
+2. **5-State Process Model**: New -> Ready -> Running -> Waiting/Blocked -> Terminated.
+3. **Turnaround Time ($TAT$)**: Total elapsed time from arrival to completion: $\\text{TAT} = \\text{Completion Time} - \\text{Arrival Time}$.
+4. **Waiting Time ($WT$)**: Cumulative idle time spent in the ready queue: $\\text{WT} = \\text{TAT} - \\text{Burst Time}$.
+5. **FCFS Scheduling**: Non-preemptive, suffers from the Convoy Effect where short I/O-bound jobs queue behind long CPU-bound jobs.
+6. **SJF Scheduling**: Provably minimizes average waiting time across all scheduling algorithms, but requires prior knowledge of burst times.
+7. **Round Robin (RR)**: Preemptive scheduling allocating time quantum $q$; balance is critical as $q \\to 0$ causes excessive context switch overhead.
+8. **Deadlock Coffman Conditions**: Mutual Exclusion, Hold and Wait, No Preemption, and Circular Wait must all hold simultaneously.
+9. **Banker's Algorithm**: Avoids deadlock by checking whether allocating resources keeps the system in a Safe State where at least one execution sequence completes.
+10. **Belady's Anomaly**: In FIFO page replacement, increasing physical page frames can paradoxically increase the number of page faults.
+
+## ⚠️ Critical Pitfalls & Common Exam Traps
+- **Trap 1**: Confusing Turnaround Time ($TAT$) with Waiting Time ($WT$). Always subtract Burst Time from $TAT$ to find $WT$.
+- **Trap 2**: Assuming an Unsafe State is already deadlocked; unsafe merely means deadlock cannot be mathematically guaranteed to be avoided under worst-case requests.
+- **Trap 3**: Forgetting that Priority Scheduling without Aging causes starvation of low-priority processes.
+
+## 💡 Best Practices & Practical Applications
+- Implement Priority Aging to systematically increment waiting process priorities and eliminate indefinite starvation.
+- Size the Round Robin quantum such that roughly $80\\%$ of CPU bursts are shorter than $q$ to optimize responsiveness.`,
+    createdAt: 'Yesterday',
   },
 ];
 

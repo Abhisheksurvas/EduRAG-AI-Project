@@ -1,5 +1,10 @@
-﻿import { useState, useRef, useEffect, useCallback, type MouseEvent } from 'react';
+import { useState, useRef, useEffect, useCallback, type MouseEvent } from 'react';
 import {
+  Printer,
+  Eye,
+  Code,
+  Check,
+  Share2,
   Flame,
   Target,
   TrendingUp,
@@ -50,12 +55,14 @@ import {
   EmptyState,
   SectionHeader,
   ToastContainer,
+  ConfirmDialog,
   type ToastData,
 } from '@/components/ui';
 
 import { cn } from '@/lib/utils';
 
 import { ChatHistorySidebar } from '@/components/ChatHistorySidebar';
+import { FormulaSheetRenderer, FormulaSectionCardsView, VisualMath, cleanLatexMath, parseFormulaSection } from './FormulaSheetRenderer';
 
 import {
   loadConversations,
@@ -84,9 +91,11 @@ import {
   createNote,
   updateNote,
   deleteNote,
+  deleteAllNotes,
   sendChatMessage,
   findMaterialsByTopic,
   generateNotesService,
+  notifyDocumentSelected,
 } from '@/lib/dataService';
 import { normalizeTopic } from '@/lib/utils';
 
@@ -179,7 +188,7 @@ export function StudentDashboard() {
             </h1>
 
             <p className="text-primary-100 mt-2 text-sm">
-              {student.program} Â· Semester {student.semester}
+              {student.program} · Semester {student.semester}
             </p>
 
             <div className="flex items-center gap-4 mt-4">
@@ -493,7 +502,7 @@ export function StudentDashboard() {
                     </p>
 
                     <p className="text-xs text-neutral-500">
-                      {doc.course} Â· {doc.size}
+                      {doc.course} · {doc.size}
                     </p>
                   </div>
 
@@ -583,7 +592,7 @@ export function StudentCourses() {
           <div className="relative flex items-start justify-between gap-4">
             <div>
               <Badge className="bg-white/20 text-white ring-white/30">
-                {course.code} Â· {course.category}
+                {course.code} · {course.category}
               </Badge>
 
               <h1 className="text-2xl font-bold font-display mt-3">
@@ -675,7 +684,7 @@ export function StudentCourses() {
                           </p>
 
                           <p className="text-xs text-neutral-500">
-                            {doc.pages} pages Â· {doc.size} Â·{' '}
+                            {doc.pages} pages · {doc.size} ·{' '}
                             {doc.uploadedAt}
                           </p>
                         </div>
@@ -732,7 +741,7 @@ export function StudentCourses() {
     <div className="space-y-6">
       <SectionHeader
         title="My Courses"
-        description={`${coursesList.length} enrolled courses Â· Semester ${student.semester}`}
+        description={`${coursesList.length} enrolled courses · Semester ${student.semester}`}
         action={
           coursesList.length < studentCourses.length ? (
             <Button
@@ -838,7 +847,7 @@ export function StudentCourses() {
                       className="cursor-pointer"
                     >
                       <p className="text-xs text-neutral-400 font-medium">
-                        {course.code} Â· {course.credits}{' '}
+                        {course.code} · {course.credits}{' '}
                         Credits
                       </p>
 
@@ -1021,7 +1030,7 @@ export function StudentLibrary() {
                     </p>
 
                     <p className="text-xs text-neutral-500 mt-1">
-                      {doc.course} Â· {doc.pages} pages Â·{' '}
+                      {doc.course} · {doc.pages} pages ·{' '}
                       {doc.size}
                     </p>
 
@@ -1697,7 +1706,7 @@ export function StudentAIAssistant() {
                   <h2 className="font-display font-semibold text-sm text-neutral-900 dark:text-neutral-100 truncate">EduRAG Assistant</h2>
                   <p className="text-xs text-neutral-500 dark:text-neutral-400 flex items-center gap-1">
                     <span className="h-1.5 w-1.5 rounded-full bg-success-500 animate-pulse" />
-                    Online Â· {docCount} document{docCount === 1 ? '' : 's'} loaded
+                    Online · {docCount} document{docCount === 1 ? '' : 's'} loaded
                   </p>
                 </div>
               </div>
@@ -1761,7 +1770,7 @@ export function StudentAIAssistant() {
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium text-neutral-800 dark:text-neutral-200 truncate">{f.name}</p>
                         <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                          {formatBytes(f.size)} Â· ~{f.pages} pages Â· {f.status === 'ready' ? 'Ready for RAG' : 'Indexing'}
+                          {formatBytes(f.size)} · ~{f.pages} pages · {f.status === 'ready' ? 'Ready for RAG' : 'Indexing'}
                         </p>
                       </div>
                       <button
@@ -2201,55 +2210,1205 @@ export function StudentAIAssistant() {
    NOTES GENERATOR
 ========================================================= */
 
+
+// ---------------------------------------------------------------------------
+// Premium Smart Note Renderer & Interactive Studio Component
+// ---------------------------------------------------------------------------
+
+function SmartNoteRenderer({
+  content,
+  title,
+  type,
+  topic,
+  course,
+}: {
+  content: string;
+  title: string;
+  type: string;
+  topic?: string;
+  course?: string;
+}) {
+  // When the user selects Formula Sheet, render the clean structured UI card format
+  const isFormulaSheet =
+    type === 'formulas' ||
+    type === 'formula' ||
+    title.toLowerCase().includes('formula sheet') ||
+    content.toLowerCase().includes('core formulas') ||
+    content.toLowerCase().includes('formula sheet & reference guide');
+
+  if (isFormulaSheet) {
+    return <FormulaSheetRenderer content={content} title={title} topic={topic} course={course} />;
+  }
+
+  const sections = content.split(/\n(?=##\s+)/g);
+  const heroBlock = sections[0] || '';
+  const bodySections = sections.slice(1);
+
+  // Parse hero title and metadata
+  const titleMatch = heroBlock.match(/^#\s+([^\n]+)/);
+  const displayTitle = titleMatch ? titleMatch[1].trim() : title;
+
+  // Clean hero introductory text (skip the # title and metadata lines)
+  const heroIntroLines = heroBlock
+    .split('\n')
+    .filter(line => !line.startsWith('# ') && !line.startsWith('**Topic') && !line.startsWith('**Note') && !line.startsWith('**Source') && line.trim() !== '---');
+  const heroIntro = heroIntroLines.join('\n').trim();
+
+  // Helper to render inline markdown formatting (bold, italic, code, math)
+  const formatInline = (text: string) => {
+    const parts = text.split(/(\*[^*]+\*|\`[^`]+\`|\$[^$]+\$)/g);
+    return parts.map((part, i) => {
+      if (part.startsWith('**') && part.endsWith('**')) {
+        const inner = part.slice(2, -2);
+        if (inner.startsWith('$') && inner.endsWith('$')) {
+          return (
+            <strong key={i} className="font-semibold text-neutral-900 font-serif">
+              <VisualMath expr={inner.slice(1, -1)} large={false} />
+            </strong>
+          );
+        }
+        return <strong key={i} className="font-semibold text-neutral-900">{formatInline(inner)}</strong>;
+      }
+      if (part.startsWith('*') && part.endsWith('*')) {
+        return <em key={i} className="text-neutral-700 italic">{part.slice(1, -1)}</em>;
+      }
+      if (part.startsWith('`') && part.endsWith('`')) {
+        return <code key={i} className="px-1.5 py-0.5 rounded bg-neutral-100 font-mono text-xs text-primary-700">{part.slice(1, -1)}</code>;
+      }
+      if (part.startsWith('$') && part.endsWith('$')) {
+        return (
+          <span key={i} className="inline-flex items-center px-1.5 py-0.5 rounded bg-violet-50 text-violet-900 font-serif text-xs font-medium border border-violet-100 mx-0.5 shadow-2xs">
+            <VisualMath expr={part.slice(1, -1)} large={false} />
+          </span>
+        );
+      }
+      return part;
+    });
+  };
+
+  // Helper to render section body
+  const renderSectionBody = (secText: string, secTitleLower: string) => {
+    // If this is a formula section, render using Student-Friendly Formula Cards!
+    const isFormulaSection =
+      secTitleLower.includes('formula') ||
+      secTitleLower.includes('equation') ||
+      secTitleLower.includes('identit') ||
+      (type === 'formulas' && (secTitleLower.includes('core') || secTitleLower.includes('quantitative')));
+
+    if (isFormulaSection) {
+      return [<FormulaSectionCardsView key="formula-cards-view" secContent={secText} />];
+    }
+
+    const lines = secText.split('\n').filter(l => l.trim().length > 0);
+    const elements: React.ReactNode[] = [];
+
+    // Check for tables
+    const tableLines = lines.filter(l => l.trim().startsWith('|') && l.trim().endsWith('|'));
+    if (tableLines.length >= 2) {
+      const headerCols = tableLines[0].split('|').map(c => c.trim()).filter(Boolean);
+      const rowLines = tableLines.slice(2);
+      elements.push(
+        <div key="table" className="my-3 overflow-x-auto rounded-xl border border-neutral-200 shadow-xs">
+          <table className="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr className="bg-neutral-50/90 border-b border-neutral-200">
+                {headerCols.map((col, idx) => (
+                  <th key={idx} className="px-3.5 py-2.5 font-semibold text-neutral-800">{formatInline(col)}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-neutral-100 bg-white">
+              {rowLines.map((rowStr, rIdx) => {
+                const cols = rowStr.split('|').map(c => c.trim()).filter(Boolean);
+                return (
+                  <tr key={rIdx} className={rIdx % 2 === 0 ? 'bg-white' : 'bg-neutral-50/40'}>
+                    {cols.map((col, cIdx) => (
+                      <td key={cIdx} className="px-3.5 py-2.5 text-neutral-700">{formatInline(col)}</td>
+                    ))}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      );
+      return elements;
+    }
+
+    const isDefSection = secTitleLower.includes('definition') || secTitleLower.includes('glossary') || secTitleLower.includes('terminology');
+    const isTrapSection = secTitleLower.includes('pitfall') || secTitleLower.includes('trap') || secTitleLower.includes('warning');
+    const isTakeawaySection = secTitleLower.includes('takeaway') || secTitleLower.includes('highlight') || secTitleLower.includes('exam');
+
+    let currentList: { term?: string; text: string; num?: string }[] = [];
+
+    lines.forEach((line, lIdx) => {
+      // Definition item: - **Term**: Definition
+      const defMatch = line.match(/^[-*•]\s+\*\*([^*]+)\*\*:\s*(.*)/);
+      if (defMatch) {
+        currentList.push({ term: defMatch[1].trim(), text: defMatch[2].trim() });
+        return;
+      }
+
+      // Numbered step: 1. **Step**: Description or 1. Description
+      const numMatch = line.match(/^(\d+)\.\s+(\*\*([^*]+)\*\*:\s*)?(.*)/);
+      if (numMatch) {
+        currentList.push({
+          num: numMatch[1],
+          term: numMatch[3]?.trim(),
+          text: numMatch[4]?.trim() || '',
+        });
+        return;
+      }
+
+      // Bullet point: - **Term**: or - Text
+      const bulletMatch = line.match(/^[-*•]\s+(.*)/);
+      if (bulletMatch) {
+        currentList.push({ text: bulletMatch[1].trim() });
+        return;
+      }
+
+      // Flush list if regular paragraph encountered
+      if (currentList.length > 0) {
+        elements.push(renderListItems(currentList, isDefSection, isTrapSection, isTakeawaySection, `${lIdx}-list`));
+        currentList = [];
+      }
+
+      // Math equation line
+      if (line.includes('$$') || line.trim().startsWith('$')) {
+        elements.push(
+          <div key={`math-${lIdx}`} className="my-3 py-5 px-4 rounded-xl bg-gradient-to-r from-violet-50/50 via-indigo-50/30 to-violet-50/50 border border-violet-100/90 flex items-center justify-center text-center overflow-x-auto shadow-2xs">
+            <VisualMath expr={line} large={true} />
+          </div>
+        );
+        return;
+      }
+
+      // Normal paragraph
+      elements.push(
+        <p key={`p-${lIdx}`} className="text-sm text-neutral-700 leading-relaxed mb-3">
+          {formatInline(line)}
+        </p>
+      );
+    });
+
+    if (currentList.length > 0) {
+      elements.push(renderListItems(currentList, isDefSection, isTrapSection, isTakeawaySection, 'final-list'));
+    }
+
+    return elements;
+  };
+
+  const renderListItems = (
+    items: { term?: string; text: string; num?: string }[],
+    isDef: boolean,
+    isTrap: boolean,
+    isTakeaway: boolean,
+    keyPrefix: string
+  ) => {
+    // If definitions section
+    if (isDef && items.some(item => item.term)) {
+      return (
+        <div key={keyPrefix} className="grid grid-cols-1 md:grid-cols-2 gap-3 my-3">
+          {items.map((item, idx) => (
+            <div key={idx} className="p-4 rounded-xl border border-primary-100/80 bg-white shadow-xs hover:border-primary-300 hover:shadow-sm transition-all">
+              {item.term && (
+                <div className="flex items-center gap-1.5 mb-2">
+                  <span className="px-2.5 py-0.5 rounded-md bg-primary-50 text-primary-700 border border-primary-200 text-xs font-bold tracking-wide">
+                    {formatInline(item.term)}
+                  </span>
+                </div>
+              )}
+              <p className="text-xs text-neutral-600 leading-relaxed">
+                {formatInline(item.text)}
+              </p>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // If numbered steps
+    if (items.some(item => item.num)) {
+      return (
+        <div key={keyPrefix} className="space-y-3 my-3">
+          {items.map((item, idx) => (
+            <div key={idx} className="flex items-start gap-3.5 p-3.5 rounded-xl bg-white border border-neutral-200/90 shadow-xs hover:border-neutral-300 transition-all">
+              <span className="grid place-items-center h-6 w-6 rounded-lg bg-primary-600 text-white text-xs font-bold shrink-0 mt-0.5 shadow-xs">
+                {item.num || idx + 1}
+              </span>
+              <div className="flex-1 min-w-0">
+                {item.term && (
+                  <span className="font-semibold text-neutral-900 text-xs block mb-1">
+                    {formatInline(item.term)}
+                  </span>
+                )}
+                <span className="text-xs text-neutral-700 leading-relaxed block">
+                  {formatInline(item.text)}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // Default bullet list
+    return (
+      <ul key={keyPrefix} className="space-y-2.5 my-3">
+        {items.map((item, idx) => (
+          <li key={idx} className="flex items-start gap-2.5 text-xs text-neutral-700 leading-relaxed">
+            <span className={`h-2 w-2 rounded-full mt-1.5 shrink-0 ${isTrap ? 'bg-amber-500' : isTakeaway ? 'bg-emerald-500' : 'bg-primary-500'}`} />
+            <span className="flex-1 min-w-0">
+              {item.term && (
+                <strong className="font-semibold text-neutral-900 mr-1.5">
+                  {formatInline(item.term)}:
+                </strong>
+              )}
+              {formatInline(item.text)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* 1. Hero Header Banner */}
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary-600 via-primary-700 to-indigo-800 text-white p-6 shadow-md">
+        <div className="relative z-10">
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/20 backdrop-blur-md text-xs font-semibold text-white">
+              {type === 'formulas' ? <Zap className="h-3.5 w-3.5 text-amber-300" /> : <Sparkles className="h-3.5 w-3.5 text-amber-300" />}
+              {type === 'formulas' ? 'Verified EduRAG Formula Sheet' : 'Verified EduRAG Study Notes'}
+            </span>
+            {topic && (
+              <span className="px-2.5 py-1 rounded-full bg-white/15 backdrop-blur-md text-xs font-medium text-white/90">
+                Topic: {topic}
+              </span>
+            )}
+            {course && (
+              <span className="px-2.5 py-1 rounded-full bg-white/10 backdrop-blur-md text-xs font-medium text-white/80">
+                Document: {course}
+              </span>
+            )}
+          </div>
+
+          <h1 className="text-xl md:text-2xl font-bold font-display tracking-tight text-white mb-2 leading-snug">
+            {displayTitle}
+          </h1>
+
+          {heroIntro && (
+            <p className="text-xs md:text-sm text-primary-100/95 leading-relaxed max-w-3xl mt-3 bg-white/10 p-3.5 rounded-xl border border-white/10 backdrop-blur-xs">
+              {formatInline(heroIntro)}
+            </p>
+          )}
+        </div>
+
+        {/* Decorative corner glow */}
+        <div className="absolute -top-12 -right-12 h-44 w-44 rounded-full bg-primary-400/20 blur-2xl pointer-events-none" />
+        <div className="absolute -bottom-10 -left-10 h-36 w-36 rounded-full bg-indigo-400/20 blur-xl pointer-events-none" />
+      </div>
+
+      {/* 2. Structured Section Blocks */}
+      <div className="space-y-4">
+        {bodySections.map((sec, sIdx) => {
+          const firstLineEnd = sec.indexOf('\n');
+          const headerLine = (firstLineEnd !== -1 ? sec.slice(0, firstLineEnd) : sec).replace(/^##\s*/, '').trim();
+          const secContent = firstLineEnd !== -1 ? sec.slice(firstLineEnd + 1) : '';
+          const hLower = headerLine.toLowerCase();
+
+          // Section card styling based on tone
+          const isWarning = hLower.includes('pitfall') || hLower.includes('trap') || hLower.includes('warning');
+          const isSuccess = hLower.includes('takeaway') || hLower.includes('highlight') || hLower.includes('best practice');
+          const isOverview = hLower.includes('executive') || hLower.includes('overview') || hLower.includes('summary');
+          const isFormula = hLower.includes('formula') || hLower.includes('equation') || hLower.includes('identit');
+
+          return (
+            <div
+              key={sIdx}
+              id={`sec-${sIdx}`}
+              className={`rounded-2xl p-5 border transition-all ${
+                isWarning
+                  ? 'bg-amber-50/40 border-amber-200/90 shadow-xs'
+                  : isSuccess
+                  ? 'bg-emerald-50/40 border-emerald-200/90 shadow-xs'
+                  : isOverview
+                  ? 'bg-primary-50/30 border-primary-200/80 shadow-xs'
+                  : isFormula
+                  ? 'bg-gradient-to-br from-violet-50/25 via-white to-violet-50/10 border-violet-200/90 shadow-xs'
+                  : 'bg-white border-neutral-200/80 shadow-xs'
+              }`}
+            >
+              <div className="flex items-center gap-2.5 pb-3 mb-3 border-b border-neutral-100">
+                <span
+                  className={`grid place-items-center h-7 w-7 rounded-lg text-xs font-bold ${
+                    isWarning
+                      ? 'bg-amber-100 text-amber-800'
+                      : isSuccess
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : isFormula
+                      ? 'bg-violet-100 text-violet-800'
+                      : 'bg-primary-100 text-primary-800'
+                  }`}
+                >
+                  {isFormula ? '⚡' : sIdx + 1}
+                </span>
+                <h3 className="font-display font-semibold text-neutral-900 text-base">
+                  {headerLine}
+                </h3>
+              </div>
+
+              <div>{renderSectionBody(secContent, hLower)}</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+
+function generatePlainTextContent(note: any): string {
+  const plain = (note.content || '')
+    .replace(/#{1,6}\s*(.*)/g, '$1\n')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/\*(.*?)\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/```[\s\S]*?```/g, (match: string) => match.replace(/```[a-z]*\n?/g, '').trim())
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/^\s*[-*+]\s+/gm, '• ')
+    .trim();
+
+  return `${note.title || 'Notes'}\n${'='.repeat(Math.max((note.title || 'Notes').length, 20))}\n` +
+    (note.chapter ? `Topic / Chapter: ${note.chapter}\n` : '') +
+    (note.course ? `Course: ${note.course}\n` : '') +
+    `Generated by EduRAG AI Study System on ${new Date().toLocaleDateString()}\n\n` +
+    plain;
+}
+
+function generateWordContent(note: any): string {
+  const noteElement = typeof document !== 'undefined' ? document.getElementById('printable-note-content') : null;
+  const innerHtml = noteElement ? noteElement.innerHTML : (note.content || '').replace(/\n/g, '<br/>');
+
+  return `
+    <html xmlns:o='urn:schemas-microsoft-com:office:office' 
+          xmlns:w='urn:schemas-microsoft-com:office:word' 
+          xmlns='http://www.w3.org/TR/REC-html40'>
+    <head>
+      <meta charset="utf-8">
+      <title>${note.title || 'Note'}</title>
+      <style>
+        body { font-family: Calibri, 'Segoe UI', Arial, sans-serif; font-size: 11pt; line-height: 1.6; color: #1e293b; padding: 40px; }
+        h1 { font-size: 24pt; color: #1e3a8a; margin-bottom: 8pt; border-bottom: 2pt solid #bfdbfe; padding-bottom: 8pt; }
+        h2 { font-size: 16pt; color: #1d4ed8; margin-top: 18pt; margin-bottom: 6pt; border-bottom: 1pt solid #e2e8f0; padding-bottom: 4pt; }
+        h3 { font-size: 13pt; color: #334155; margin-top: 12pt; margin-bottom: 4pt; }
+        p { margin: 6pt 0; }
+        table { border-collapse: collapse; width: 100%; margin: 14pt 0; }
+        th, td { border: 1pt solid #cbd5e1; padding: 7pt 10pt; text-align: left; }
+        th { background-color: #f1f5f9; font-weight: bold; color: #0f172a; }
+        .meta-box { background: #f8fafc; border: 1pt solid #e2e8f0; padding: 12pt; border-radius: 6pt; margin-bottom: 20pt; }
+        .badge { background-color: #dbeafe; color: #1e40af; padding: 3pt 8pt; border-radius: 4pt; font-size: 9pt; font-weight: bold; display: inline-block; margin-bottom: 6pt; }
+        code { font-family: Consolas, monospace; background: #f1f5f9; padding: 2pt 4pt; border-radius: 3pt; font-size: 10pt; }
+        pre { background: #f8fafc; border: 1pt solid #e2e8f0; padding: 10pt; border-radius: 6pt; font-family: Consolas, monospace; }
+        ul, ol { margin: 6pt 0 6pt 20pt; }
+        li { margin-bottom: 4pt; }
+      </style>
+    </head>
+    <body>
+      <div class="meta-box">
+        <span class="badge">${note.type === 'formulas' ? '⚡ FORMULA SHEET' : 'STUDY NOTES'}</span>
+        <div style="font-size: 16pt; font-weight: bold; color: #0f172a; margin-top: 4pt;">${note.title || 'Generated Notes'}</div>
+        ${note.chapter ? `<div style="color: #475569; font-size: 10pt; margin-top: 2pt;"><strong>Topic / Chapter:</strong> ${note.chapter}</div>` : ''}
+        ${note.course ? `<div style="color: #475569; font-size: 10pt; margin-top: 2pt;"><strong>Course:</strong> ${note.course}</div>` : ''}
+        <div style="color: #94a3b8; font-size: 9pt; margin-top: 4pt;">Generated by EduRAG AI &bull; ${new Date().toLocaleDateString()}</div>
+      </div>
+      <div>
+        ${innerHtml}
+      </div>
+    </body>
+    </html>
+  `;
+}
+
+function generatePptContent(note: any): string {
+  const lines = (note.content || '').split('\n');
+  const slides: { title: string; bullets: string[] }[] = [];
+  let currentTitle = note.title || 'Overview';
+  let currentBullets: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('# ') || trimmed.startsWith('## ') || trimmed.startsWith('### ')) {
+      if (currentBullets.length > 0 || currentTitle !== (note.title || 'Overview')) {
+        slides.push({ title: currentTitle, bullets: currentBullets });
+      }
+      currentTitle = trimmed.replace(/^#+\s*/, '');
+      currentBullets = [];
+    } else if (trimmed.startsWith('- ') || trimmed.startsWith('* ') || trimmed.startsWith('• ')) {
+      currentBullets.push(trimmed.replace(/^[-*•]\s*/, ''));
+    } else if (trimmed.length > 0 && !trimmed.startsWith('```')) {
+      currentBullets.push(trimmed);
+    }
+  }
+  if (currentBullets.length > 0 || slides.length === 0) {
+    slides.push({ title: currentTitle, bullets: currentBullets });
+  }
+
+  return `
+    <html xmlns:o="urn:schemas-microsoft-com:office:office"
+          xmlns:x="urn:schemas-microsoft-com:office:powerpoint"
+          xmlns="http://www.w3.org/TR/REC-html40">
+    <head>
+      <meta charset="utf-8">
+      <title>${note.title || 'Presentation'}</title>
+      <style>
+        body { font-family: 'Segoe UI', Calibri, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 20px; }
+        .slide {
+          page-break-after: always;
+          width: 960px;
+          min-height: 540px;
+          background: #ffffff;
+          border: 1px solid #cbd5e1;
+          border-radius: 8px;
+          box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+          padding: 48px;
+          margin: 0 auto 30px auto;
+          box-sizing: border-box;
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+        }
+        .slide-header { border-bottom: 2px solid #3b82f6; padding-bottom: 12px; margin-bottom: 24px; }
+        .slide-title { font-size: 26px; font-weight: bold; color: #1e3a8a; margin: 0; }
+        .slide-subtitle { font-size: 13px; color: #64748b; margin-top: 4px; }
+        .slide-body { flex: 1; font-size: 16px; color: #334155; line-height: 1.7; }
+        .bullet-item { margin-bottom: 12px; display: flex; align-items: flex-start; }
+        .bullet-dot { color: #3b82f6; font-size: 20px; line-height: 1; margin-right: 12px; }
+        .slide-footer { border-top: 1px solid #e2e8f0; padding-top: 12px; display: flex; justify-content: space-between; font-size: 11px; color: #94a3b8; }
+        .title-slide { text-align: center; justify-content: center; align-items: center; background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%); color: #ffffff; }
+        .title-slide h1 { font-size: 38px; color: #ffffff; margin-bottom: 16px; font-weight: 800; }
+        .title-slide p { font-size: 18px; color: #93c5fd; max-width: 600px; margin: 0 auto; }
+        .title-slide .badge { display: inline-block; padding: 6px 16px; background: rgba(255,255,255,0.15); border-radius: 9999px; font-size: 13px; font-weight: 600; color: #67e8f9; margin-bottom: 20px; }
+      </style>
+    </head>
+    <body>
+      <div class="slide title-slide">
+        <div>
+          <span class="badge">${note.type === 'formulas' ? '⚡ FORMULA DECK' : '📚 STUDY PRESENTATION'}</span>
+          <h1>${note.title || 'Study Presentation'}</h1>
+          ${note.chapter ? `<p>Topic: ${note.chapter}</p>` : ''}
+          <div style="margin-top: 32px; font-size: 12px; color: #cbd5e1;">
+            Generated with EduRAG AI Study System &bull; ${new Date().toLocaleDateString()}
+          </div>
+        </div>
+      </div>
+
+      ${slides.map((s, idx) => `
+        <div class="slide">
+          <div class="slide-header">
+            <h2 class="slide-title">${s.title}</h2>
+            <div class="slide-subtitle">${note.title || 'Notes'} &bull; Slide ${idx + 1}</div>
+          </div>
+          <div class="slide-body">
+            ${s.bullets.slice(0, 8).map(b => `
+              <div class="bullet-item">
+                <span class="bullet-dot">&bull;</span>
+                <div>${b.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</div>
+              </div>
+            `).join('')}
+          </div>
+          <div class="slide-footer">
+            <span>EduRAG AI Presentation</span>
+            <span>Slide ${idx + 2} of ${slides.length + 1}</span>
+          </div>
+        </div>
+      `).join('')}
+    </body>
+    </html>
+  `;
+}
+
+export function cleanMathForPdf(text: string): string {
+  if (!text) return '';
+  let s = text.trim();
+
+  // Strip wrapping $$ or $
+  s = s.replace(/^\$\$([\s\S]*?)\$\$$/g, '$1').replace(/^\$([\s\S]*?)\$$/g, '$1').trim();
+  s = s.replace(/\$\$([\s\S]*?)\$\$/g, '$1').replace(/\$([^$]+)\$/g, '$1');
+
+  // Strip markdown bold / italic / code artifacts
+  s = s.replace(/\*\*([^*]+)\*\*/g, '$1');
+  s = s.replace(/\*([^*]+)\*/g, '$1');
+  s = s.replace(/\`([^`]+)\`/g, '$1');
+
+  // Fractions: \frac{a}{b} -> (a / b)
+  while (/\\frac\{([^{}]+)\}\{([^{}]+)\}/.test(s)) {
+    s = s.replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, '($1 / $2)');
+  }
+
+  // Roots
+  s = s.replace(/\\sqrt\{([^}]+)\}/g, 'sqrt($1)');
+  s = s.replace(/\\sqrt\[(\d+)\]\{([^}]+)\}/g, 'root-$1($2)');
+
+  // Text commands
+  s = s.replace(/\\(text|mathrm|operatorname|mathbf|mathit|mathtt)\{([^}]+)\}/g, '$2');
+
+  // Hats, bars, and vectors
+  s = s.replace(/\\hat\{y\}/g, 'y_pred').replace(/\\hat\{x\}/g, 'x_hat').replace(/\\hat\{([a-zA-Z])\}/g, '$1_hat');
+  s = s.replace(/\\bar\{x\}/g, 'x_mean').replace(/\\bar\{y\}/g, 'y_mean').replace(/\\bar\{([a-zA-Z])\}/g, '$1_mean');
+  s = s.replace(/\\vec\{([a-zA-Z])\}/g, 'vec($1)');
+
+  // Summations & products with bounds
+  s = s.replace(/\\sum_\{([^}]+)\}\^\{?([^}\s]+)\}?/g, 'Sum ($1 to $2) ');
+  s = s.replace(/\\sum_\{([^}]+)\}/g, 'Sum ($1) ');
+  s = s.replace(/\\sum\b/g, 'Sum ');
+  s = s.replace(/\\prod_\{([^}]+)\}\^\{?([^}\s]+)\}?/g, 'Product ($1 to $2) ');
+  s = s.replace(/\\prod_\{([^}]+)\}/g, 'Product ($1) ');
+  s = s.replace(/\\prod\b/g, 'Product ');
+  s = s.replace(/\\int_\{([^}]+)\}\^\{?([^}\s]+)\}?/g, 'Integral ($1 to $2) ');
+  s = s.replace(/\\int\b/g, 'Integral ');
+
+  // Multipliers before absolute values: 2|E| -> 2 * |E|
+  s = s.replace(/(\d+)\s*\|([A-Za-z0-9_]+)\|/g, '$1 * |$2|');
+
+  // Multipliers & arithmetic
+  s = s.replace(/\\cdot\b/g, ' * ');
+  s = s.replace(/\\times\b/g, ' * ');
+  s = s.replace(/\\div\b/g, ' / ');
+  s = s.replace(/\\pm\b/g, ' +/- ');
+  s = s.replace(/\\mp\b/g, ' -/+ ');
+
+  // Relational & Logic
+  s = s.replace(/\\(leq|le)\b/g, ' <= ');
+  s = s.replace(/\\(geq|ge)\b/g, ' >= ');
+  s = s.replace(/\\(neq|ne)\b/g, ' != ');
+  s = s.replace(/\\approx\b/g, ' ~= ');
+  s = s.replace(/\\equiv\b/g, ' = ');
+  s = s.replace(/\\ll\b/g, ' << ');
+  s = s.replace(/\\gg\b/g, ' >> ');
+  s = s.replace(/\\(implies|Longrightarrow)\b/g, ' => ');
+  s = s.replace(/\\(iff|Longleftrightarrow)\b/g, ' <=> ');
+  s = s.replace(/\\(to|rightarrow)\b/g, ' -> ');
+  s = s.replace(/\\leftarrow\b/g, ' <- ');
+
+  // Set theory
+  s = s.replace(/\\in\b/g, ' in ');
+  s = s.replace(/\\notin\b/g, ' not in ');
+  s = s.replace(/\\subset\b/g, ' subset of ');
+  s = s.replace(/\\cup\b/g, ' union ');
+  s = s.replace(/\\cap\b/g, ' intersection ');
+
+  // Greek letters
+  s = s.replace(/\\alpha\b/g, 'alpha');
+  s = s.replace(/\\beta\b/g, 'beta');
+  s = s.replace(/\\gamma\b/g, 'gamma');
+  s = s.replace(/\\delta\b/g, 'delta');
+  s = s.replace(/\\epsilon\b/g, 'epsilon');
+  s = s.replace(/\\theta\b/g, 'theta');
+  s = s.replace(/\\lambda\b/g, 'lambda');
+  s = s.replace(/\\mu\b/g, 'mu');
+  s = s.replace(/\\pi\b/g, 'pi');
+  s = s.replace(/\\sigma\b/g, 'sigma');
+  s = s.replace(/\\tau\b/g, 'tau');
+  s = s.replace(/\\phi\b/g, 'phi');
+  s = s.replace(/\\omega\b/g, 'omega');
+  s = s.replace(/\\Delta\b/g, 'Delta');
+  s = s.replace(/\\Sigma\b/g, 'Sum');
+  s = s.replace(/\\infty\b/g, 'infinity');
+
+  // Modulo
+  s = s.replace(/\\pmod\{([^}]+)\}/g, '(mod $1)');
+  s = s.replace(/\\mod\b/g, 'mod');
+
+  // Delimiters
+  s = s.replace(/\\left\(/g, '(').replace(/\\right\)/g, ')');
+  s = s.replace(/\\left\[/g, '[').replace(/\\right\]/g, ']');
+  s = s.replace(/\\left\\\{/g, '{').replace(/\\right\\\}/g, '}');
+  s = s.replace(/\\left\|/g, '|').replace(/\\right\|/g, '|');
+  s = s.replace(/\\\{/g, '{').replace(/\\\}/g, '}');
+  s = s.replace(/\\_/g, '_');
+  s = s.replace(/\\ /g, ' ');
+  s = s.replace(/\\[a-zA-Z]+/g, '');
+
+  // Unicode to clean ASCII for standard PDF Helvetica/Courier rendering
+  s = s.replace(/[√]/g, 'sqrt');
+  s = s.replace(/[∑]/g, 'Sum');
+  s = s.replace(/[∏]/g, 'Product');
+  s = s.replace(/[∫]/g, 'Integral');
+  s = s.replace(/[ŷ]/g, 'y_pred');
+  s = s.replace(/[x̂]/g, 'x_hat');
+  s = s.replace(/[x̄]/g, 'x_mean');
+  s = s.replace(/[ȳ]/g, 'y_mean');
+  s = s.replace(/[²]/g, '^2');
+  s = s.replace(/[³]/g, '^3');
+  s = s.replace(/[⁴]/g, '^4');
+  s = s.replace(/[ⁿ]/g, '^n');
+  s = s.replace(/[₁]/g, '_1');
+  s = s.replace(/[₂]/g, '_2');
+  s = s.replace(/[₃]/g, '_3');
+  s = s.replace(/[₄]/g, '_4');
+  s = s.replace(/[ᵢ]/g, '_i');
+  s = s.replace(/[ⱼ]/g, '_j');
+  s = s.replace(/[ₙ]/g, '_n');
+  s = s.replace(/[α]/g, 'alpha');
+  s = s.replace(/[β]/g, 'beta');
+  s = s.replace(/[γ]/g, 'gamma');
+  s = s.replace(/[δ]/g, 'delta');
+  s = s.replace(/[ε]/g, 'epsilon');
+  s = s.replace(/[θ]/g, 'theta');
+  s = s.replace(/[λ]/g, 'lambda');
+  s = s.replace(/[μ]/g, 'mu');
+  s = s.replace(/[π]/g, 'pi');
+  s = s.replace(/[σ]/g, 'sigma');
+  s = s.replace(/[τ]/g, 'tau');
+  s = s.replace(/[φ]/g, 'phi');
+  s = s.replace(/[ω]/g, 'omega');
+  s = s.replace(/[Δ]/g, 'Delta');
+  s = s.replace(/[Σ]/g, 'Sum');
+  s = s.replace(/[Ω]/g, 'Omega');
+  s = s.replace(/[≤]/g, '<=');
+  s = s.replace(/[≥]/g, '>=');
+  s = s.replace(/[≠]/g, '!=');
+  s = s.replace(/[≈]/g, '~=');
+  s = s.replace(/[≡]/g, '=');
+  s = s.replace(/[×·]/g, '*');
+  s = s.replace(/[÷]/g, '/');
+  s = s.replace(/[±]/g, '+/-');
+  s = s.replace(/[∓]/g, '-/+');
+  s = s.replace(/[→]/g, '->');
+  s = s.replace(/[←]/g, '<-');
+  s = s.replace(/[⇒]/g, '=>');
+  s = s.replace(/[⇔]/g, '<=>');
+  s = s.replace(/[—–]/g, '-');
+  s = s.replace(/[•]/g, '*');
+  s = s.replace(/[“”]/g, '"');
+  s = s.replace(/[‘’]/g, "'");
+
+  return s.replace(/[ \t]+/g, ' ').trim();
+}
+
+export function formatNoteDateTime(val?: string): string {
+  if (!val) return 'Just now';
+  if (val === 'Yesterday' || val.includes('ago')) return val;
+  const d = new Date(val);
+  if (isNaN(d.getTime())) return val;
+  const dateStr = d.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  const timeStr = d.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+  return `${dateStr} at ${timeStr}`;
+}
+
+export async function downloadPdfDirect(note: any) {
+  const { jsPDF } = await import('jspdf');
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'pt',
+    format: 'a4',
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 44;
+  const maxLineWidth = pageWidth - margin * 2;
+  let y = 48;
+
+  const checkPageBreak = (neededHeight: number) => {
+    if (y + neededHeight > pageHeight - margin) {
+      doc.addPage();
+      y = 48;
+    }
+  };
+
+  const createdD = note.createdAt ? new Date(note.createdAt) : new Date();
+  const dateStr = !isNaN(createdD.getTime())
+    ? createdD.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    : new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const timeStr = !isNaN(createdD.getTime())
+    ? createdD.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+    : new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+
+  const isFormulaSheet =
+    note.type === 'formulas' ||
+    note.type === 'formula' ||
+    (note.title && note.title.toLowerCase().includes('formula sheet')) ||
+    (note.content && (
+      note.content.toLowerCase().includes('core formulas') ||
+      note.content.toLowerCase().includes('formula sheet & reference guide') ||
+      note.content.toLowerCase().includes('formula name')
+    ));
+
+  const parsedFormulas = isFormulaSheet ? parseFormulaSection(note.content || '') : [];
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Dedicated Formula Sheet PDF (Student-Friendly, Step-by-Step Explanation)
+  // ──────────────────────────────────────────────────────────────────────────
+  if (parsedFormulas.length > 0) {
+    // Header Badge
+    doc.setFillColor(238, 242, 255);
+    doc.roundedRect(margin, y, 175, 20, 4, 4, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.setTextColor(67, 56, 202);
+    doc.text('FORMULA SHEET & REFERENCE GUIDE', margin + 8, y + 13.5);
+    y += 32;
+
+    // Document Title
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(19);
+    doc.setTextColor(15, 23, 42);
+    const titleLines = doc.splitTextToSize(note.title || 'Formula Sheet', maxLineWidth);
+    doc.text(titleLines, margin, y);
+    y += titleLines.length * 23 + 4;
+
+    // Metadata
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9.5);
+    doc.setTextColor(100, 116, 139);
+    if (note.chapter) {
+      doc.text(`Topic / Chapter: ${cleanMathForPdf(note.chapter)}`, margin, y);
+      y += 14;
+    }
+    if (note.course) {
+      doc.text(`Document / Course: ${cleanMathForPdf(note.course)}`, margin, y);
+      y += 14;
+    }
+    doc.text(`Generated by EduRAG AI Study System • ${dateStr} at ${timeStr} • ${parsedFormulas.length} Verified Formulas`, margin, y);
+    y += 16;
+
+    // Divider Line
+    doc.setDrawColor(203, 213, 225);
+    doc.setLineWidth(1);
+    doc.line(margin, y, pageWidth - margin, y);
+    y += 20;
+
+    // Render each formula card with student-friendly explanations
+    parsedFormulas.forEach((item, idx) => {
+      checkPageBreak(130);
+
+      // 1. Formula Header Bar (Unit, Chapter, Page & Formula Name)
+      doc.setFillColor(241, 245, 249);
+      doc.roundedRect(margin, y, maxLineWidth, 22, 4, 4, 'F');
+      doc.setDrawColor(203, 213, 225);
+      doc.setLineWidth(0.75);
+      doc.roundedRect(margin, y, maxLineWidth, 22, 4, 4, 'D');
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.setTextColor(30, 41, 59);
+      doc.text(`Formula #${idx + 1}: ${cleanMathForPdf(item.name)}`, margin + 8, y + 14.5);
+
+      // Exact Unit, Chapter, and Page badge on right side
+      const sourceBadge = `${cleanMathForPdf(item.unit)}  |  ${cleanMathForPdf(item.chapter)}  |  Page ${cleanMathForPdf(item.page)}`;
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.setTextColor(79, 70, 229);
+      const badgeWidth = doc.getTextWidth(sourceBadge);
+      doc.text(sourceBadge, pageWidth - margin - badgeWidth - 8, y + 14.5);
+
+      y += 28;
+
+      // 2. Clear Formula Display Box (Monospace, clear notation, no raw LaTeX)
+      const cleanFormula = cleanMathForPdf(item.studentFormula || item.math || item.name);
+      const formulaLines = doc.splitTextToSize(cleanFormula, maxLineWidth - 20);
+      const formulaBoxHeight = Math.max(30, 16 + formulaLines.length * 14);
+
+      checkPageBreak(formulaBoxHeight + 10);
+      doc.setFillColor(238, 242, 255);
+      doc.roundedRect(margin, y, maxLineWidth, formulaBoxHeight, 4, 4, 'F');
+      doc.setDrawColor(199, 210, 254);
+      doc.setLineWidth(0.75);
+      doc.roundedRect(margin, y, maxLineWidth, formulaBoxHeight, 4, 4, 'D');
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.setTextColor(67, 56, 202);
+      doc.text('MATHEMATICAL FORMULA:', margin + 10, y + 12);
+
+      doc.setFont('courier', 'bold');
+      doc.setFontSize(10.5);
+      doc.setTextColor(15, 23, 42);
+      doc.text(formulaLines, margin + 10, y + 25);
+
+      y += formulaBoxHeight + 10;
+
+      // 3. Formula Meaning / Definition
+      if (item.meaning) {
+        const cleanMeaning = cleanMathForPdf(item.meaning);
+        const meaningLines = doc.splitTextToSize(cleanMeaning, maxLineWidth - 10);
+        checkPageBreak(meaningLines.length * 13 + 18);
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9);
+        doc.setTextColor(30, 41, 59);
+        doc.text('Formula Meaning / Definition:', margin, y);
+        y += 13;
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(9);
+        doc.setTextColor(51, 65, 85);
+        doc.text(meaningLines, margin + 6, y);
+        y += meaningLines.length * 13 + 8;
+      }
+
+      // 4. Variables Explained (Meaning of every symbol)
+      if (item.symbols && item.symbols.length > 0) {
+        checkPageBreak(30);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9);
+        doc.setTextColor(30, 41, 59);
+        doc.text('Variables Explained (What each symbol means):', margin, y);
+        y += 13;
+
+        item.symbols.forEach(sym => {
+          const symStr = `• ${cleanMathForPdf(sym.symbol)}: ${cleanMathForPdf(sym.meaning)}`;
+          const symLines = doc.splitTextToSize(symStr, maxLineWidth - 12);
+          checkPageBreak(symLines.length * 12 + 4);
+
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(8.5);
+          doc.setTextColor(51, 65, 85);
+          doc.text(symLines, margin + 8, y);
+          y += symLines.length * 12 + 3;
+        });
+        y += 6;
+      }
+
+      // 5. Step-by-Step Calculation
+      if (item.explanation) {
+        const cleanExpl = cleanMathForPdf(item.explanation);
+        const explLines = doc.splitTextToSize(cleanExpl, maxLineWidth - 10);
+        checkPageBreak(explLines.length * 13 + 18);
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9);
+        doc.setTextColor(30, 41, 59);
+        doc.text('Step-by-Step Calculation Method:', margin, y);
+        y += 13;
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(9);
+        doc.setTextColor(51, 65, 85);
+        doc.text(explLines, margin + 6, y);
+        y += explLines.length * 13 + 8;
+      }
+
+      // 6. Simple Numerical Example
+      if (item.workedExample) {
+        const cleanEx = cleanMathForPdf(item.workedExample);
+        const exLines = doc.splitTextToSize(cleanEx, maxLineWidth - 10);
+        checkPageBreak(exLines.length * 13 + 18);
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9);
+        doc.setTextColor(30, 41, 59);
+        doc.text('Simple Numerical Example:', margin, y);
+        y += 13;
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(9);
+        doc.setTextColor(51, 65, 85);
+        doc.text(exLines, margin + 6, y);
+        y += exLines.length * 13 + 8;
+      }
+
+      // 7. Final Answer (Highlighted Result)
+      if (item.finalAnswer) {
+        const cleanAns = cleanMathForPdf(item.finalAnswer);
+        const ansLines = doc.splitTextToSize(`Final Answer: ${cleanAns}`, maxLineWidth - 16);
+        const ansBoxHeight = Math.max(22, 14 + ansLines.length * 12);
+
+        checkPageBreak(ansBoxHeight + 8);
+        doc.setFillColor(236, 253, 245);
+        doc.roundedRect(margin, y, maxLineWidth, ansBoxHeight, 4, 4, 'F');
+        doc.setDrawColor(167, 243, 208);
+        doc.setLineWidth(0.75);
+        doc.roundedRect(margin, y, maxLineWidth, ansBoxHeight, 4, 4, 'D');
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9);
+        doc.setTextColor(6, 95, 70);
+        doc.text(ansLines, margin + 8, y + 13.5);
+
+        y += ansBoxHeight + 8;
+      }
+
+      // 8. Quick Memory Tip (Mnemonic)
+      if (item.mnemonic) {
+        const cleanTip = cleanMathForPdf(item.mnemonic);
+        const tipLines = doc.splitTextToSize(`Quick Memory Tip: ${cleanTip}`, maxLineWidth - 16);
+        const tipBoxHeight = Math.max(22, 14 + tipLines.length * 12);
+
+        checkPageBreak(tipBoxHeight + 8);
+        doc.setFillColor(255, 251, 235);
+        doc.roundedRect(margin, y, maxLineWidth, tipBoxHeight, 4, 4, 'F');
+        doc.setDrawColor(253, 230, 138);
+        doc.setLineWidth(0.75);
+        doc.roundedRect(margin, y, maxLineWidth, tipBoxHeight, 4, 4, 'D');
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(8.5);
+        doc.setTextColor(146, 64, 14);
+        doc.text(tipLines, margin + 8, y + 13.5);
+
+        y += tipBoxHeight + 10;
+      }
+
+      // Bottom separator rule between formulas
+      checkPageBreak(24);
+      doc.setDrawColor(226, 232, 240);
+      doc.setLineWidth(0.75);
+      doc.line(margin, y, pageWidth - margin, y);
+      y += 18;
+    });
+
+    // Add page numbers on all pages
+    const totalPages = doc.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      doc.setPage(i);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(148, 163, 184);
+      doc.text('EduRAG AI Study System • Formula Reference Guide', margin, pageHeight - 24);
+      const pageStr = `Page ${i} of ${totalPages}`;
+      const pw = doc.getTextWidth(pageStr);
+      doc.text(pageStr, pageWidth - margin - pw, pageHeight - 24);
+    }
+
+    const safeTitle = (note.title || 'formula_sheet').replace(/[^a-z0-9_-]+/gi, '_').toLowerCase();
+    doc.save(`${safeTitle}.pdf`);
+    return;
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Clean Standard Study Notes PDF (Non-Formula notes fallback)
+  // ──────────────────────────────────────────────────────────────────────────
+  // Header Badge
+  doc.setFillColor(238, 242, 255);
+  doc.roundedRect(margin, y, 98, 20, 4, 4, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(67, 56, 202);
+  doc.text('STUDY NOTES', margin + 8, y + 13.5);
+  y += 34;
+
+  // Title
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(20);
+  doc.setTextColor(15, 23, 42);
+  const titleLines = doc.splitTextToSize(note.title || 'Generated Notes', maxLineWidth);
+  doc.text(titleLines, margin, y);
+  y += titleLines.length * 24 + 4;
+
+  // Metadata
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9.5);
+  doc.setTextColor(100, 116, 139);
+  if (note.chapter) {
+    doc.text(`Topic / Chapter: ${cleanMathForPdf(note.chapter)}`, margin, y);
+    y += 14;
+  }
+  if (note.course) {
+    doc.text(`Course: ${cleanMathForPdf(note.course)}`, margin, y);
+    y += 14;
+  }
+  doc.text(`Generated by EduRAG AI Study System • ${dateStr} at ${timeStr}`, margin, y);
+  y += 16;
+
+  // Top Rule
+  doc.setDrawColor(226, 232, 240);
+  doc.setLineWidth(1);
+  doc.line(margin, y, pageWidth - margin, y);
+  y += 20;
+
+  // Content
+  const rawLines = (note.content || '').split('\n');
+  for (const rawLine of rawLines) {
+    const trimmed = rawLine.trim();
+    if (!trimmed) {
+      y += 8;
+      continue;
+    }
+
+    if (trimmed.startsWith('# ')) {
+      checkPageBreak(36);
+      y += 6;
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(16);
+      doc.setTextColor(30, 58, 138);
+      const heading = cleanMathForPdf(trimmed.replace(/^#\s*/, ''));
+      const split = doc.splitTextToSize(heading, maxLineWidth);
+      doc.text(split, margin, y);
+      y += split.length * 20 + 8;
+    } else if (trimmed.startsWith('## ')) {
+      checkPageBreak(30);
+      y += 5;
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(13);
+      doc.setTextColor(29, 78, 216);
+      const heading = cleanMathForPdf(trimmed.replace(/^##\s*/, ''));
+      const split = doc.splitTextToSize(heading, maxLineWidth);
+      doc.text(split, margin, y);
+      y += split.length * 17 + 6;
+    } else if (trimmed.startsWith('### ')) {
+      checkPageBreak(24);
+      y += 4;
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.setTextColor(30, 41, 59);
+      const heading = cleanMathForPdf(trimmed.replace(/^###\s*/, ''));
+      const split = doc.splitTextToSize(heading, maxLineWidth);
+      doc.text(split, margin, y);
+      y += split.length * 15 + 4;
+    } else if (trimmed.startsWith('- ') || trimmed.startsWith('* ') || trimmed.startsWith('• ')) {
+      checkPageBreak(18);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(10);
+      doc.setTextColor(30, 41, 59);
+      const bulletText = cleanMathForPdf(trimmed.replace(/^[-*•]\s*/, ''));
+      doc.setFillColor(59, 130, 246);
+      doc.circle(margin + 4, y - 3, 2, 'F');
+      const split = doc.splitTextToSize(bulletText, maxLineWidth - 14);
+      doc.text(split, margin + 14, y);
+      y += split.length * 14 + 4;
+    } else {
+      checkPageBreak(16);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(10);
+      doc.setTextColor(51, 65, 85);
+      const cleanText = cleanMathForPdf(trimmed);
+      const split = doc.splitTextToSize(cleanText, maxLineWidth);
+      doc.text(split, margin, y);
+      y += split.length * 14 + 4;
+    }
+  }
+
+  // Add page numbers on all pages
+  const totalPages = doc.getNumberOfPages();
+  for (let i = 1; i <= totalPages; i++) {
+    doc.setPage(i);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(148, 163, 184);
+    doc.text('EduRAG AI Study System • Study Notes', margin, pageHeight - 24);
+    const pageStr = `Page ${i} of ${totalPages}`;
+    const pw = doc.getTextWidth(pageStr);
+    doc.text(pageStr, pageWidth - margin - pw, pageHeight - 24);
+  }
+
+  const safeTitle = (note.title || 'notes').replace(/[^a-z0-9_-]+/gi, '_').toLowerCase();
+  doc.save(`${safeTitle}.pdf`);
+}
+
 export function StudentNotes() {
   const [generated, setGenerated] = useState(false);
   const [notes, setNotes] = useState<any[]>([]);
   const [activeNote, setActiveNote] = useState<any | null>(null);
-  const [editingNote, setEditingNote] = useState(false);
-  const [noteDraft, setNoteDraft] = useState('');
   const [isGeneratingNote, setIsGeneratingNote] = useState(false);
+  const [noteGenElapsed, setNoteGenElapsed] = useState(0);
+
+  useEffect(() => {
+    if (!isGeneratingNote) {
+      setNoteGenElapsed(0);
+      return;
+    }
+    const timer = setInterval(() => {
+      setNoteGenElapsed(s => s + 1);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [isGeneratingNote]);
   const [notesLoading, setNotesLoading] = useState(true);
   const [notesError, setNotesError] = useState<string | null>(null);
+  const [copiedNote, setCopiedNote] = useState<boolean>(false);
+  const [showExportModal, setShowExportModal] = useState(false);
+
+  useEffect(() => {
+    if (showExportModal) {
+      const originalOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => {
+        document.body.style.overflow = originalOverflow;
+      };
+    }
+  }, [showExportModal]);
+  const [showDeleteNoteConfirm, setShowDeleteNoteConfirm] = useState(false);
+  const [isDeletingNote, setIsDeletingNote] = useState(false);
   const [noteTopic, setNoteTopic] = useState('');
   const [uploadedNoteFiles, setUploadedNoteFiles] = useState<{ id: string; name: string; status: 'processing' | 'ready' | 'failed' }[]>([]);
   const [noteUploadStatus, setNoteUploadStatus] = useState<string | null>(null);
   const [isUploadingNoteFile, setIsUploadingNoteFile] = useState(false);
   const [toasts, setToasts] = useState<ToastData[]>([]);
+  const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
+  const [isDeletingAll, setIsDeletingAll] = useState(false);
   const noteFileInputRef = useRef<HTMLInputElement>(null);
   const [indexedMaterials, setIndexedMaterials] = useState<{ id: string; name: string; status?: string }[]>([]);
   const [selectedIndexedId, setSelectedIndexedId] = useState<string>('all');
+  const [selectedPrompt, setSelectedPrompt] = useState<string | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  const promptOptions = [
+    'Summarize this into five key takeaways',
+    'Create a concise meeting minutes draft from this',
+    'Make 10 flashcards from this material',
+    'Build a timeline and milestones from this',
+    'Explain this in simple terms for a beginner',
+    'Compare the main options presented here',
+  ];
+
+  const handleDeleteAllNotes = async () => {
+    setIsDeletingAll(true);
+    try {
+      const allIds = notes.map(n => n.id);
+      await deleteAllNotes(allIds);
+      setNotes([]);
+      setActiveNote(null);
+      setGenerated(false);
+      setShowDeleteAllConfirm(false);
+      pushToast('All recently generated notes deleted successfully.', 'success');
+    } catch (err) {
+      console.warn('Failed to delete all notes:', err);
+      pushToast('Failed to delete notes. Please try again.', 'error');
+    } finally {
+      setIsDeletingAll(false);
+    }
+  };
+
+  const loadMaterials = useCallback(async () => {
+    try {
+      const token = typeof window !== 'undefined' ? window.localStorage.getItem('edurag-auth-token') : null;
+      const res = await fetch('http://localhost:8000/api/materials', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) return [];
+      const data = await res.json();
+      const list: any[] = Array.isArray(data) ? data : (data?.materials ?? []);
+      const mapped: { id: string; name: string; status?: string }[] = [];
+      const seen = new Set<string>();
+      list.forEach((m: any) => {
+        const id = m.id || m._id;
+        const name = m.name || m.documentName || m.filename || m.title;
+        if (id && name && !seen.has(name.toLowerCase())) {
+          seen.add(name.toLowerCase());
+          mapped.push({ id: String(id), name: String(name), status: m.status });
+        }
+      });
+      setIndexedMaterials(mapped);
+      return mapped;
+    } catch {
+      return [];
+    }
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    const loadMaterials = async () => {
-      try {
-        const token = typeof window !== 'undefined' ? window.localStorage.getItem('edurag-auth-token') : null;
-        const res = await fetch('http://localhost:8000/api/materials', {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-        const list: any[] = Array.isArray(data) ? data : (data?.materials ?? []);
-        if (!cancelled) {
-          const mapped: { id: string; name: string; status?: string }[] = [];
-          const seen = new Set<string>();
-          list.forEach((m: any) => {
-            const id = m.id || m._id;
-            const name = m.name || m.documentName || m.filename || m.title;
-            if (id && name && !seen.has(name.toLowerCase())) {
-              seen.add(name.toLowerCase());
-              mapped.push({ id: String(id), name: String(name), status: m.status });
-            }
-          });
-          setIndexedMaterials(mapped);
-        }
-      } catch {
-        // offline or non-blocking
-      }
-    };
     loadMaterials();
-    return () => { cancelled = true; };
-  }, []);
+  }, [loadMaterials]);
 
   const pushToast = useCallback((message: string, tone: ToastData['tone']) => {
     const id = `note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -2317,11 +3476,12 @@ export function StudentNotes() {
   ];
 
   const MAX_UPLOADED_FILES = 10;
-  const allowedExtensions = ['pdf', 'pptx', 'docx', 'txt', 'md', 'csv', 'ppt', 'png', 'jpg', 'jpeg'];
+  const allowedExtensions = [
+    'pdf', 'pptx', 'docx', 'txt', 'md', 'csv', 'ppt', 'png', 'jpg', 'jpeg',
+    'mp3', 'wav', 'm4a', 'ogg', 'mp4', 'webm', 'mov',
+  ];
 
-  const handleNoteFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files ? Array.from(event.target.files) : [];
-    event.target.value = '';
+  const handleFiles = async (files: File[]) => {
     if (files.length === 0) return;
 
     const validFiles: File[] = [];
@@ -2329,8 +3489,8 @@ export function StudentNotes() {
     for (const file of files) {
       const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
       if (!allowedExtensions.includes(extension)) {
-        setNoteUploadStatus(`"${file.name}" — unsupported file type. Use PDF, PPTX, DOCX, TXT, MD, CSV, PPT, PNG, JPG, or JPEG.`);
-        pushToast(`"${file.name}" — unsupported file type. Use PDF, PPTX, DOCX, TXT, MD, CSV, PPT, PNG, JPG, or JPEG.`, 'error');
+        setNoteUploadStatus(`"${file.name}" — unsupported file type. Use PDF, audio, video, images, or text documents.`);
+        pushToast(`"${file.name}" — unsupported file type. Use PDF, audio, video, images, or text documents.`, 'error');
         continue;
       }
       if (file.size > 10 * 1024 * 1024) {
@@ -2385,84 +3545,112 @@ export function StudentNotes() {
           throw new Error(data.error || `The document "${file.name}" could not be uploaded.`);
         }
         const materialStatus = data.material.status || 'processing';
+        const isReadyImmediately = materialStatus === 'ready' || materialStatus === 'approved' || (data.chunks && data.chunks > 0);
         const uploadedEntry = {
           id: data.material.id,
           name: data.material.name || file.name,
-          status: materialStatus === 'ready' ? 'ready' as const : 'processing' as const,
+          status: isReadyImmediately ? ('ready' as const) : ('processing' as const),
         };
         newlyUploaded.push(uploadedEntry);
 
-        if (materialStatus !== 'ready') {
+        if (!isReadyImmediately) {
           const pendingId = data.material.id;
+          const fileName = file.name;
           let attempt = 0;
-          const maxAttempts = 60;
+          const maxAttempts = 25;
+
+          const markReady = () => {
+            setUploadedNoteFiles(prev => prev.map(item =>
+              (item.id === pendingId || item.name.toLowerCase() === fileName.toLowerCase())
+                ? { ...item, status: 'ready' }
+                : item,
+            ));
+            setNoteUploadStatus(`✓ ${fileName} indexed successfully. You can generate notes now.`);
+            loadMaterials().then(mats => {
+              if (mats && mats.length > 0) {
+                const found = mats.find(m => m.id === pendingId || m.name.toLowerCase() === fileName.toLowerCase());
+                if (found) {
+                  setSelectedIndexedId(found.id);
+                  if (!noteTopic.trim()) {
+                    setNoteTopic(found.name.replace(/\.[^/.]+$/, ''));
+                  }
+                }
+              }
+            });
+          };
+
           const poll = async () => {
+            attempt++;
             if (attempt >= maxAttempts) {
-              // Even if polling exhausted, if backend accepted the upload, mark as ready so user isn't blocked
-              setUploadedNoteFiles(prev => prev.map(item =>
-                (item.id === pendingId || item.name === file.name) ? { ...item, status: 'ready' } : item,
-              ));
-              setNoteUploadStatus(`✓ ${file.name} ready for notes generation.`);
+              markReady();
               return;
             }
-            attempt++;
+
             try {
               const statusToken = window.localStorage.getItem('edurag-auth-token');
-              // 1. Direct status check
+              const controller = new AbortController();
+              const timer = setTimeout(() => controller.abort(), 3000);
               const statusRes = await fetch(
-                `http://localhost:8000/api/materials/status?id=${encodeURIComponent(pendingId)}&name=${encodeURIComponent(file.name)}`,
+                `http://localhost:8000/api/materials/status?id=${encodeURIComponent(pendingId)}&name=${encodeURIComponent(fileName)}`,
                 {
                   headers: statusToken ? { Authorization: `Bearer ${statusToken}` } : {},
+                  signal: controller.signal,
                 },
               );
+              clearTimeout(timer);
+
               if (statusRes.ok) {
                 const statusData = await statusRes.json();
-                if (statusData && (statusData.ready || statusData.status === 'ready' || statusData.chunks > 0)) {
-                  setUploadedNoteFiles(prev => prev.map(item =>
-                    (item.id === pendingId || item.name === file.name) ? { ...item, status: 'ready' } : item,
-                  ));
-                  setNoteUploadStatus(`✓ ${file.name} indexed successfully. You can generate notes now.`);
-                  pushToast(`"${file.name}" indexed successfully. You can generate notes now.`, 'success');
+                if (statusData && (statusData.ready || statusData.status === 'ready' || (statusData.chunks && statusData.chunks > 0))) {
+                  markReady();
+                  pushToast(`"${fileName}" indexed successfully. You can generate notes now.`, 'success');
                   return;
                 }
               }
 
-              // 2. Check general materials list
+              const listCtrl = new AbortController();
+              const listTimer = setTimeout(() => listCtrl.abort(), 3000);
               const listRes = await fetch('http://localhost:8000/api/materials', {
                 headers: statusToken ? { Authorization: `Bearer ${statusToken}` } : {},
+                signal: listCtrl.signal,
               });
+              clearTimeout(listTimer);
+
               if (listRes.ok) {
                 const materials = await listRes.json();
                 if (Array.isArray(materials)) {
                   const readyMat = materials.find((m: any) =>
                     m.id === pendingId ||
-                    m.name?.toLowerCase() === file.name.toLowerCase() ||
-                    m.documentName?.toLowerCase() === file.name.toLowerCase()
+                    m.name?.toLowerCase() === fileName.toLowerCase() ||
+                    m.documentName?.toLowerCase() === fileName.toLowerCase()
                   );
-                  if (readyMat && (readyMat.status === 'ready' || readyMat.status === 'approved' || readyMat.chunks > 0)) {
-                    setUploadedNoteFiles(prev => prev.map(item =>
-                      (item.id === pendingId || item.name === file.name) ? { ...item, status: 'ready' } : item,
-                    ));
-                    setNoteUploadStatus(`✓ ${file.name} indexed successfully. You can generate notes now.`);
-                    pushToast(`"${file.name}" indexed successfully. You can generate notes now.`, 'success');
+                  if (readyMat && (readyMat.status === 'ready' || readyMat.status === 'approved' || (readyMat.chunks && readyMat.chunks > 0))) {
+                    markReady();
+                    pushToast(`"${fileName}" indexed successfully. You can generate notes now.`, 'success');
                     return;
                   }
                 }
               }
             } catch {
-              // Silently retry
+              // Non-fatal network hiccup during poll
             }
-            // After 3 attempts (~2 seconds), mark as ready if still processing
-            if (attempt >= 4) {
-              setUploadedNoteFiles(prev => prev.map(item =>
-                (item.id === pendingId || item.name === file.name) ? { ...item, status: 'ready' } : item,
-              ));
-              setNoteUploadStatus(`✓ ${file.name} indexed successfully. You can generate notes now.`);
-              return;
-            }
+
             setTimeout(poll, 600);
           };
-          setTimeout(poll, 400);
+
+          setTimeout(poll, 500);
+        } else {
+          loadMaterials().then(mats => {
+            if (mats && mats.length > 0) {
+              const found = mats.find(m => m.id === data.material.id || m.name.toLowerCase() === file.name.toLowerCase());
+              if (found) {
+                setSelectedIndexedId(found.id);
+                if (!noteTopic.trim()) {
+                  setNoteTopic(found.name.replace(/\.[^/.]+$/, ''));
+                }
+              }
+            }
+          });
         }
       }
 
@@ -2472,6 +3660,7 @@ export function StudentNotes() {
       const anyProcessing = newlyUploaded.some(item => item.status === 'processing');
       if (allReady) {
         setNoteUploadStatus(`✓ ${newlyUploaded.length} file(s) indexed successfully. You can generate notes now.`);
+        loadMaterials();
       } else if (anyFailed) {
         setNoteUploadStatus(`Indexing failed for some file(s). Please try again.`);
       } else if (anyProcessing) {
@@ -2486,6 +3675,93 @@ export function StudentNotes() {
     }
   };
 
+  const handleNoteFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files ? Array.from(event.target.files) : [];
+    event.target.value = '';
+    await handleFiles(files);
+  };
+
+  const handleGenerateNotes = async () => {
+    const enteredTopic = noteTopic.trim();
+    if (!enteredTopic) {
+      setNotesError('Course / Topic / Chapter is compulsory. Please enter a unit or chapter (e.g. Unit-2, Decision Trees) before generating.');
+      pushToast('Course / Topic / Chapter is compulsory (e.g. Unit-2). Please enter it before generating.', 'error');
+      return;
+    }
+
+    setIsGeneratingNote(true);
+    setNotesError(null);
+    try {
+      const label = noteTypes.find(item => item.id === type)?.label || 'Smart Notes';
+      const docName = (selectedIndexedId && selectedIndexedId !== 'all' ? indexedMaterials.find(m => m.id === selectedIndexedId)?.name : '') ||
+        (uploadedNoteFiles[0]?.name || '');
+      const docNameClean = docName.replace(/\.[^/.]+$/, '').trim();
+
+      const displayTopic = enteredTopic;
+      const headingTitle = selectedPrompt ? `${selectedPrompt}` : `${label}: ${displayTopic}`;
+
+      const materialIds: string[] = [];
+      if (selectedIndexedId && selectedIndexedId !== 'all') {
+        materialIds.push(selectedIndexedId);
+      } else if (selectedIndexedId === 'all' && indexedMaterials.length > 0) {
+        materialIds.push(...indexedMaterials.map(m => m.id));
+      }
+      if (uploadedNoteFiles.length > 0) {
+        materialIds.push(...uploadedNoteFiles.map(f => f.id));
+      }
+
+      const contextStr = [
+        docName ? `Selected document: ${docName}` : (uploadedNoteFiles.length > 0 ? `Uploaded documents: ${uploadedNoteFiles.map(f => f.name).join(', ')}` : ''),
+        selectedPrompt ? `Prompt directive: "${selectedPrompt}"` : '',
+      ].filter(Boolean).join('\n');
+
+      const result = await generateNotesService({
+        topic: displayTopic,
+        type,
+        materialIds: materialIds.length > 0 ? materialIds : undefined,
+        context: contextStr,
+        documentName: docName || undefined,
+        selectedDocumentName: docName || undefined,
+      });
+
+      const answerText = result.content ? result.content.trim() : '';
+
+      if (!answerText) {
+        throw new Error('Failed to generate notes. Please try again.');
+      }
+
+      const finalTitle = result.title || headingTitle;
+
+      const note = {
+        id: `note_${Date.now()}`,
+        title: finalTitle,
+        type,
+        course: docNameClean || 'Study Material',
+        chapter: enteredTopic || (selectedPrompt || displayTopic),
+        content: answerText,
+        createdAt: new Date().toISOString(),
+        userId: getCurrentUserId(),
+      };
+
+      try {
+        await createNote(note);
+      } catch (saveErr) {
+        console.warn('Note save warning:', saveErr);
+      }
+
+      setNotes(current => [note, ...current]);
+      setActiveNote(note);
+      setGenerated(true);
+      pushToast(`"${finalTitle}" generated successfully!`, 'success');
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Unable to generate notes.';
+      setNotesError(msg);
+      pushToast(msg, 'error');
+    } finally {
+      setIsGeneratingNote(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <SectionHeader
@@ -2493,376 +3769,691 @@ export function StudentNotes() {
         description="Generate smart notes from your course materials using AI"
       />
 
-      <div className="grid lg:grid-cols-3 gap-6">
-        {/* Generate panel */}
-        <Card className="lg:col-span-1">
-          <CardHeader
-            title="Generate Notes"
-          subtitle="Choose a topic or upload a document"
-            icon={Sparkles}
-          />
-
-          <CardBody className="space-y-4">
-            {/* Select Document Already Indexed */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-sm font-medium text-neutral-700">
-                  Select Document Already Indexed
-                </label>
-                {indexedMaterials.length > 0 && (
-                  <span className="text-xs font-medium text-success-700 bg-success-50 px-2 py-0.5 rounded-full border border-success-200">
-                    {indexedMaterials.length} doc{indexedMaterials.length > 1 ? 's' : ''} available
-                  </span>
-                )}
+      {/* Main 2-Section Layout: Left = Add a file & Pick a prompt; Right = Notes Generator i.e. Chapter Summary Viewer */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        
+        {/* ──────────────── Left Section (lg:col-span-5): Add a file, below it Pick a prompt ──────────────── */}
+        <div className="lg:col-span-5 space-y-6">
+          <div className="rounded-3xl border border-neutral-200/90 bg-white shadow-sm overflow-hidden p-6 md:p-7 space-y-6">
+            
+            {/* 1. Add a file */}
+            <div className="space-y-4">
+              <div className="flex items-start gap-3">
+                <span className="grid place-items-center h-6 w-6 rounded-full bg-emerald-500 text-white text-xs font-bold shrink-0 mt-0.5 shadow-2xs">
+                  1
+                </span>
+                <div>
+                  <h2 className="text-base font-bold font-display text-neutral-900 leading-tight">
+                    Add a file
+                  </h2>
+                  <p className="text-xs text-neutral-500 mt-0.5">
+                    Drop in anything you'd like to use.
+                  </p>
+                </div>
               </div>
-              <select
-                value={selectedIndexedId}
-                onChange={e => {
-                  const id = e.target.value;
-                  setSelectedIndexedId(id);
-                  if (id === 'all') {
-                    if (!noteTopic.trim()) {
-                      setNoteTopic('All Documents');
-                    }
-                  } else if (id && !noteTopic.trim()) {
-                    const found = indexedMaterials.find(m => m.id === id);
-                    if (found?.name) {
-                      setNoteTopic(found.name.replace(/\.[^/.]+$/, ''));
-                    }
-                  }
-                }}
-                className="w-full h-10 px-3 rounded-xl border border-neutral-200 bg-white text-sm outline-none focus:border-primary-400"
-              >
-                <option value="all">All doc.</option>
-                {indexedMaterials.map(m => (
-                  <option key={m.id} value={m.id}>
-                    {m.name} {m.status === 'processing' ? '(Indexing...)' : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
 
-            <div>
-              <label className="text-sm font-medium text-neutral-700 mb-2 block">
-              Enter Topic or Chapter
-              </label>
-            <input
-              type="text"
-              value={noteTopic}
-              onChange={event => setNoteTopic(event.target.value)}
-              placeholder="e.g. Graph traversal, Chapter 4"
-              className="w-full h-10 px-3 rounded-xl border border-neutral-200 bg-white text-sm outline-none focus:border-primary-400"
-            />
-          </div>
+              {/* Document Selection Input */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-semibold text-neutral-700 flex items-center gap-1.5">
+                    <Database className="h-3.5 w-3.5 text-emerald-600" />
+                    Select Document Already Indexed
+                    <span className="text-neutral-400 font-normal">(optional)</span>
+                  </label>
+                  {indexedMaterials.length > 0 && (
+                    <span className="text-[11px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200/80">
+                      {indexedMaterials.length} available
+                    </span>
+                  )}
+                </div>
+                <select
+                  value={selectedIndexedId}
+                  onChange={async e => {
+                    const id = e.target.value;
+                    setSelectedIndexedId(id);
+                    const selectedMat = indexedMaterials.find(m => m.id === id);
+                    const docName = id === 'all' ? 'All Indexed Documents' : (selectedMat?.name || id);
 
-<div>
-               <label className="text-sm font-medium text-neutral-700 mb-2 block">
-                 Upload File
-               </label>
-               <input
-                 ref={noteFileInputRef}
-                 type="file"
-                 multiple
-                 onChange={handleNoteFileUpload}
-                 className="hidden"
-                 accept=".pdf,.pptx,.docx,.txt,.md,.csv,.ppt,.png,.jpg,.jpeg,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown,text/csv"
-               />
-               <button
-                 type="button"
-                 onClick={() => noteFileInputRef.current?.click()}
-                 disabled={isUploadingNoteFile}
-                 className="w-full flex items-center gap-3 min-h-12 px-3 rounded-xl border border-dashed border-neutral-300 bg-neutral-50 text-left hover:border-primary-400 hover:bg-primary-50 transition-colors disabled:opacity-60"
-               >
-                 <span className="grid place-items-center h-8 w-8 rounded-lg bg-primary-100 text-primary-600">
-                   {isUploadingNoteFile ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
-                 </span>
-                 <span className="min-w-0 flex-1">
-                   <span className="block text-sm font-medium text-neutral-700 truncate">
-                     {uploadedNoteFiles.length > 0 ? `${uploadedNoteFiles.length} file(s) selected` : 'Choose study documents'}
-                   </span>
-                   <span className="block text-xs text-neutral-500">
-                     {isUploadingNoteFile ? 'Uploading and indexing…' : 'PDF, PPTX, DOCX, TXT, MD, CSV, PPT, PNG, JPG, or JPEG'}
-                   </span>
-                 </span>
-               </button>
-{uploadedNoteFiles.length > 0 && (
-                  <div className="mt-3 space-y-2 max-h-32 overflow-y-auto">
-                    {uploadedNoteFiles.map((file, idx) => (
-                      <div key={file.id} className="space-y-2">
-                        <div className="flex items-center gap-3 p-3 rounded-xl border border-primary-200 bg-primary-50">
-                          <FileText className="h-4.5 w-4.5 text-primary-600 shrink-0" />
-                          <span className="flex-1 text-sm text-primary-800 font-medium truncate">{file.name}</span>
-                          {file.status === 'processing' ? (
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                setUploadedNoteFiles(prev => prev.map((f, i) => i === idx ? { ...f, status: 'ready' } : f));
-                                setNoteUploadStatus(`✓ ${file.name} is ready for notes.`);
-                              }}
-                              title="Click to mark ready immediately"
-                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-warning-100 text-warning-700 ring-1 ring-warning-200 hover:bg-warning-200 transition-colors cursor-pointer"
-                            >
-                              <LoaderCircle className="h-3 w-3 animate-spin" />
-                              Processing… (Click if Ready)
-                            </button>
-                          ) : file.status === 'ready' ? (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-success-100 text-success-700 ring-1 ring-success-200">
-                              <CheckCircle2 className="h-3 w-3" />
-                              Ready
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-error-100 text-error-700 ring-1 ring-error-200">
-                              <XCircle className="h-3 w-3" />
-                              Indexing failed
-                            </span>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setUploadedNoteFiles(prev => prev.filter((f, index) => index !== idx));
-                            }}
-                            className="p-1.5 rounded-lg text-primary-600 hover:text-primary-800 hover:bg-primary-100 transition-colors"
-                            title="Remove file"
-                          >
-                            <X className="h-4 w-4" />
-                          </button>
-                        </div>
-                        {file.status === 'failed' && (
-                          <div className="flex items-center justify-between gap-3 px-1">
-                            <p className="text-xs font-medium text-error-600">Indexing failed for "{file.name}". Please try again.</p>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              icon={RefreshCw}
-                              onClick={() => {
-                                setUploadedNoteFiles(prev => prev.filter((f, index) => index !== idx));
-                                if (noteFileInputRef.current) noteFileInputRef.current.click();
-                              }}
-                            >
-                              Retry
-                            </Button>
-                          </div>
-                        )}
-                      </div>
-                    ))}
+                    notifyDocumentSelected(id, docName).catch(console.warn);
+
+                    if (id !== 'all' && selectedMat?.name && !noteTopic.trim()) {
+                      setNoteTopic(selectedMat.name.replace(/\.[^/.]+$/, ''));
+                    }
+                  }}
+                  className="w-full h-9 px-3 rounded-xl border border-neutral-200 bg-white text-xs outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 transition-all text-neutral-800"
+                >
+                  <option value="all">All doc.</option>
+                  {indexedMaterials.map(m => (
+                    <option key={m.id} value={m.id}>
+                      {m.name} {m.status === 'processing' ? '(Indexing...)' : ''}
+                    </option>
+                  ))}
+                </select>
+
+                {selectedIndexedId && (
+                  <div className="mt-2 flex items-center justify-between p-2 rounded-xl bg-emerald-50/80 border border-emerald-200 text-xs text-emerald-950">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <FileText className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                      <span className="truncate">
+                        Selected: <strong>{selectedIndexedId === 'all' ? 'All Indexed Documents' : (indexedMaterials.find(m => m.id === selectedIndexedId)?.name || selectedIndexedId)}</strong>
+                      </span>
+                    </div>
+                    <span className="shrink-0 text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-semibold border border-emerald-200">
+                      Active
+                    </span>
                   </div>
                 )}
-                {noteUploadStatus && (
-                  <p className={`mt-1.5 text-xs font-medium ${
-                    noteUploadStatus.includes('indexed successfully') ? 'text-success-600' :
-                    noteUploadStatus.includes('Indexing in progress') ? 'text-warning-600' :
-                    noteUploadStatus.includes('Indexing failed') ? 'text-error-600' :
-                    noteUploadStatus.includes('✓') ? 'text-success-600' : 'text-neutral-500'
-                  }`}>
-                    {noteUploadStatus}
-                  </p>
-                )}
-             </div>
-
-            <div>
-              <label className="text-sm font-medium text-neutral-700 mb-2 block">
-                Note Type
-              </label>
-
-              <div className="grid grid-cols-2 gap-2">
-                {noteTypes.map(nt => {
-                  const Icon = nt.icon;
-
-                  return (
-                    <button
-                      key={nt.id}
-                      type="button"
-                      onClick={() =>
-                        setType(nt.id)
-                      }
-                      className={cn(
-                        'flex flex-col items-center gap-2 p-3 rounded-xl border text-xs font-medium transition-all',
-                        type === nt.id
-                          ? toneStyles[nt.tone]
-                          : 'border-neutral-200 text-neutral-600 hover:bg-neutral-50'
-                      )}
-                    >
-                      <Icon className="h-5 w-5" />
-                      {nt.label}
-                    </button>
-                  );
-                })}
               </div>
-            </div>
 
-<Button
-               icon={Sparkles}
-               className="w-full"
-               disabled={isGeneratingNote || (!noteTopic.trim() && uploadedNoteFiles.length === 0 && (!selectedIndexedId || (selectedIndexedId === 'all' && indexedMaterials.length === 0)))}
-               onClick={async () => {
-                 setIsGeneratingNote(true);
-                 setNotesError(null);
-                 try {
-                   const label = noteTypes.find(item => item.id === type)?.label || 'Smart Notes';
-                   const rawTopic = noteTopic.trim() ||
-                     (selectedIndexedId !== 'all' ? indexedMaterials.find(m => m.id === selectedIndexedId)?.name?.replace(/\.[^/.]+$/, '') : '') ||
-                     (uploadedNoteFiles[0]?.name?.replace(/\.[^/.]+$/, '')) ||
-                     (selectedIndexedId === 'all' && indexedMaterials.length > 0 ? 'All Documents' : 'General Notes');
-
-                   const materialIds: string[] = [];
-                   if (selectedIndexedId && selectedIndexedId !== 'all') {
-                     materialIds.push(selectedIndexedId);
-                   } else if (selectedIndexedId === 'all' && indexedMaterials.length > 0) {
-                     materialIds.push(...indexedMaterials.map(m => m.id));
-                   }
-                   if (uploadedNoteFiles.length > 0) {
-                     materialIds.push(...uploadedNoteFiles.map(f => f.id));
-                   }
-
-                   const contextStr = uploadedNoteFiles.length > 0
-                     ? `Uploaded documents: ${uploadedNoteFiles.map(f => f.name).join(', ')}`
-                     : (selectedIndexedId && selectedIndexedId !== 'all')
-                       ? `Selected document: ${indexedMaterials.find(m => m.id === selectedIndexedId)?.name || ''}`
-                       : '';
-
-                   const result = await generateNotesService({
-                     topic: rawTopic,
-                     type,
-                     materialIds: materialIds.length > 0 ? materialIds : undefined,
-                     context: contextStr,
-                   });
-
-                   const answerText = result.content ? result.content.trim() : '';
-
-                   if (!answerText) {
-                     throw new Error('Failed to generate notes. Please try again.');
-                   }
-
-                   const note = {
-                     id: `note_${Date.now()}`,
-                     title: `${label} — ${rawTopic}`,
-                     type,
-                     course: selectedIndexedId && selectedIndexedId !== 'all'
-                       ? (indexedMaterials.find(m => m.id === selectedIndexedId)?.name || 'Study Material')
-                       : 'Student Study Material',
-                     chapter: rawTopic,
-                     content: answerText,
-                     createdAt: new Date().toISOString(),
-                     userId: getCurrentUserId(),
-                   };
-
-                   try {
-                     await createNote(note);
-                   } catch (saveErr) {
-                     console.warn('Note save warning:', saveErr);
-                   }
-
-                   setNotes(current => [note, ...current]);
-                   setActiveNote(note);
-                   setNoteDraft(note.content);
-                   setGenerated(true);
-                   pushToast(`"${label} — ${rawTopic}" generated successfully!`, 'success');
-                 } catch (error) {
-                   const msg = error instanceof Error ? error.message : 'Unable to generate notes.';
-                   setNotesError(msg);
-                   pushToast(msg, 'error');
-                 } finally {
-                   setIsGeneratingNote(false);
-                 }
-               }}
-             >
-               {isGeneratingNote ? 'Generating Fast Notes…' : 'Generate Smart Notes'}
-             </Button>
-            {notesError && <p className="text-xs text-error-600">{notesError}</p>}
-          </CardBody>
-        </Card>
-
-        {/* Generated notes */}
-        <div className="lg:col-span-2">
-          {!generated ? (
-            <Card className="h-full">
-              <CardBody>
-                <EmptyState
-                  icon={StickyNote}
-                  title="No notes generated yet"
-                  description="Enter a topic or chapter, then click Generate. Notes are created strictly from your uploaded/teacher-provided study materials."
+              {/* Course / Topic / Chapter (Compulsory) - Below Select Document Already Indexed */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-semibold text-neutral-700">
+                    Course / Topic / Chapter <span className="text-rose-600 font-bold">* (Compulsory)</span>
+                  </label>
+                  <span className="text-[11px] text-neutral-400">e.g. Unit-2, Decision Trees</span>
+                </div>
+                <input
+                  type="text"
+                  required
+                  value={noteTopic}
+                  onChange={event => {
+                    setNoteTopic(event.target.value);
+                    if (event.target.value.trim() && notesError) setNotesError(null);
+                  }}
+                  placeholder="e.g. Unit-2, Chapter 4, Decision Trees (Compulsory)"
+                  className={`w-full h-9 px-3 rounded-xl border bg-white text-xs outline-none transition-all ${
+                    !noteTopic.trim() && notesError
+                      ? 'border-rose-400 focus:border-rose-500 focus:ring-1 focus:ring-rose-500/30'
+                      : 'border-neutral-200 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30'
+                  }`}
                 />
-              </CardBody>
-            </Card>
-          ) : (
-            <Card className="h-full flex flex-col">
-              <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-200">
-                <div className="flex items-center gap-2">
-                  <Badge tone="primary">
-                    <Sparkles className="h-3 w-3" />
-                    AI Generated
-                  </Badge>
+              </div>
 
-                  <span className="text-xs text-neutral-400">
-                    Just now
-                  </span>
+              {/* Note Type Section - Below Course / Topic / Chapter */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-neutral-700">
+                    Note Type
+                  </label>
+                  <span className="text-[11px] text-neutral-400">Select structure</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {noteTypes.map(nt => {
+                    const Icon = nt.icon;
+                    const isSelected = type === nt.id;
+                    return (
+                      <button
+                        key={nt.id}
+                        type="button"
+                        onClick={() => setType(nt.id)}
+                        className={`flex items-center gap-2 h-9 px-2.5 rounded-xl border text-xs font-medium transition-all text-left cursor-pointer w-full min-w-0 ${
+                          isSelected
+                            ? 'border-emerald-500 bg-emerald-50/80 text-emerald-950 font-semibold ring-1 ring-emerald-500 shadow-2xs'
+                            : 'border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50 hover:border-neutral-300'
+                        }`}
+                      >
+                        <span className={`grid place-items-center h-6 w-6 rounded-lg shrink-0 ${
+                          isSelected ? 'bg-emerald-100 text-emerald-700' : 'bg-neutral-100 text-neutral-500'
+                        }`}>
+                          <Icon className="h-3.5 w-3.5" />
+                        </span>
+                        <span className="truncate whitespace-nowrap">{nt.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Hidden native file input */}
+              <input
+                ref={noteFileInputRef}
+                type="file"
+                multiple
+                onChange={handleNoteFileUpload}
+                className="hidden"
+                accept=".pdf,.pptx,.docx,.txt,.md,.csv,.ppt,.png,.jpg,.jpeg,.mp3,.wav,.m4a,.ogg,.mp4,.webm,.mov,audio/*,video/*,image/*,text/*"
+              />
+
+              {/* Large Dashed-Border Upload Drop-Zone matching Reference Image */}
+              <div
+                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragOver(true); }}
+                onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragOver(true); }}
+                onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragOver(false); }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setIsDragOver(false);
+                  if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                    handleFiles(Array.from(e.dataTransfer.files));
+                  }
+                }}
+                onClick={() => {
+                  if (!isUploadingNoteFile) {
+                    noteFileInputRef.current?.click();
+                  }
+                }}
+                className={`relative w-full rounded-2xl border-2 border-dashed transition-all cursor-pointer p-6 flex flex-col items-center justify-center text-center group ${
+                  isDragOver
+                    ? 'border-emerald-500 bg-emerald-50/70 scale-[1.01]'
+                    : 'border-emerald-300/80 hover:border-emerald-500 bg-emerald-50/20 hover:bg-emerald-50/40'
+                }`}
+              >
+                {/* Stacked squircle illustration in center (Audio, Document, Image) */}
+                <div className="relative flex items-center justify-center w-28 h-20 mb-3 select-none pointer-events-none">
+                  {/* Left tile - soft purple squircle with music note */}
+                  <div className="absolute left-1.5 w-12 h-12 rounded-2xl bg-[#ede9fe] text-[#7c3aed] flex items-center justify-center shadow-xs -rotate-8 transform transition-transform group-hover:-rotate-12">
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M9 18V5l12-2v13" />
+                      <circle cx="6" cy="18" r="3" />
+                      <circle cx="18" cy="16" r="3" />
+                    </svg>
+                  </div>
+                  {/* Right tile - soft purple squircle with photo icon */}
+                  <div className="absolute right-1.5 w-12 h-12 rounded-2xl bg-[#ede9fe] text-[#7c3aed] flex items-center justify-center shadow-xs rotate-8 transform transition-transform group-hover:rotate-12">
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+                      <circle cx="9" cy="9" r="2" />
+                      <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+                    </svg>
+                  </div>
+                  {/* Center front tile - soft peach squircle with document note icon */}
+                  <div className="relative z-10 w-14 h-14 rounded-2xl bg-[#ffedd5] text-[#ea580c] flex items-center justify-center shadow-md border border-[#fed7aa]/60 transform transition-transform group-hover:scale-105">
+                    <svg className="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                      <polyline points="14 2 14 8 20 8" />
+                      <line x1="16" y1="13" x2="8" y2="13" />
+                      <line x1="16" y1="17" x2="8" y2="17" />
+                      <line x1="10" y1="9" x2="8" y2="9" />
+                    </svg>
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                {/* Text */}
+                <h3 className="text-base font-bold text-neutral-900 tracking-tight">
+                  Drag your notes here
+                </h3>
+                <p className="text-xs text-neutral-500 mt-1 max-w-xs leading-relaxed">
+                  PDF, audio, video, images or text — any language.
+                </p>
+
+                {/* Green action text */}
+                <button
+                  type="button"
+                  className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-600 group-hover:text-emerald-700 group-hover:underline cursor-pointer"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    noteFileInputRef.current?.click();
+                  }}
+                >
+                  <span>Or browse your files</span>
+                  <span className="text-sm leading-none">→</span>
+                </button>
+              </div>
+
+              {/* Uploading Status & Uploaded Files UI */}
+              {isUploadingNoteFile && (
+                <div className="flex items-center gap-2 text-xs text-emerald-800 bg-emerald-50 p-2.5 rounded-xl border border-emerald-200">
+                  <LoaderCircle className="h-4 w-4 animate-spin text-emerald-600 shrink-0" />
+                  <span>Uploading and extracting document text…</span>
+                </div>
+              )}
+
+              {uploadedNoteFiles.length > 0 && (
+                <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                  {uploadedNoteFiles.map((file, idx) => (
+                    <div key={file.id} className="space-y-1.5">
+                      <div className="flex items-center gap-2.5 p-2.5 rounded-xl border border-neutral-200 bg-neutral-50">
+                        <FileText className="h-4 w-4 text-emerald-600 shrink-0" />
+                        <span className="flex-1 text-xs text-neutral-800 font-medium truncate">{file.name}</span>
+                        {file.status === 'processing' ? (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              setUploadedNoteFiles(prev => prev.map((f, i) => i === idx ? { ...f, status: 'ready' } : f));
+                              setNoteUploadStatus(`✓ ${file.name} is ready for notes.`);
+                              loadMaterials().then(mats => {
+                                if (mats && mats.length > 0) {
+                                  const found = mats.find(m => m.id === file.id || m.name.toLowerCase() === file.name.toLowerCase());
+                                  if (found) setSelectedIndexedId(found.id);
+                                }
+                              });
+                            }}
+                            title="Click to mark ready immediately"
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-warning-100 text-warning-700 ring-1 ring-warning-200 hover:bg-warning-200 transition-colors cursor-pointer"
+                          >
+                            <LoaderCircle className="h-3 w-3 animate-spin" />
+                            Processing… (Click if Ready)
+                          </button>
+                        ) : file.status === 'ready' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-success-100 text-success-700 ring-1 ring-success-200">
+                            <CheckCircle2 className="h-3 w-3" />
+                            Ready
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-error-100 text-error-700 ring-1 ring-error-200">
+                            <XCircle className="h-3 w-3" />
+                            Indexing failed
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setUploadedNoteFiles(prev => prev.filter((_, index) => index !== idx));
+                          }}
+                          className="p-1 rounded text-neutral-400 hover:text-error-600 hover:bg-error-50 transition-colors cursor-pointer"
+                          title="Remove file"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                      {file.status === 'failed' && (
+                        <div className="flex items-center justify-between gap-2 px-1 text-xs text-error-600">
+                          <span>Indexing failed for "{file.name}".</span>
+                          <button
+                            type="button"
+                            className="text-xs font-semibold underline cursor-pointer"
+                            onClick={() => {
+                              setUploadedNoteFiles(prev => prev.filter((_, index) => index !== idx));
+                              noteFileInputRef.current?.click();
+                            }}
+                          >
+                            Retry
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {noteUploadStatus && (
+                <p className={`text-xs font-medium ${
+                  noteUploadStatus.includes('indexed successfully') ? 'text-success-600' :
+                  noteUploadStatus.includes('Indexing in progress') ? 'text-warning-600' :
+                  noteUploadStatus.includes('Indexing failed') ? 'text-error-600' :
+                  noteUploadStatus.includes('✓') ? 'text-success-600' : 'text-neutral-500'
+                }`}>
+                  {noteUploadStatus}
+                </p>
+              )}
+            </div>
+
+            {/* Divider between Add a file and Pick a prompt */}
+            <div className="h-px bg-neutral-200/80 -mx-6 md:-mx-7" />
+
+            {/* 2. Pick a prompt (below Add a file) */}
+            <div className="space-y-4">
+              {/* Step 2 Header */}
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <span className="grid place-items-center h-6 w-6 rounded-full bg-neutral-400 text-white text-xs font-bold shrink-0 mt-0.5 shadow-2xs">
+                    2
+                  </span>
+                  <div>
+                    <h2 className="text-base font-bold font-display text-neutral-900 leading-tight">
+                      Pick a prompt
+                    </h2>
+                    <p className="text-xs text-neutral-500 mt-0.5">
+                      Add a file first — then any prompt runs against it.
+                    </p>
+                  </div>
+                </div>
+
+                {/* AI powered (Demo) Badge */}
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/80 shadow-2xs shrink-0">
+                  <Sparkles className="h-3 w-3 text-emerald-600" />
+                  AI powered (Demo)
+                </span>
+              </div>
+
+              {/* Pick a Prompt Section (6 Clickable Prompt Options) */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-neutral-700">
+                    Pick a Prompt
+                  </label>
+                  {selectedPrompt && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPrompt(null)}
+                      className="text-[11px] text-neutral-400 hover:text-neutral-600 underline cursor-pointer"
+                    >
+                      Clear selection
+                    </button>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  {promptOptions.map((promptText) => {
+                    const isPromptSelected = selectedPrompt === promptText;
+                    return (
+                      <button
+                        key={promptText}
+                        type="button"
+                        onClick={() => {
+                          setSelectedPrompt(prev => prev === promptText ? null : promptText);
+                        }}
+                        className={`w-full flex items-center justify-between p-3 rounded-xl border text-xs sm:text-sm text-left transition-all cursor-pointer group ${
+                          isPromptSelected
+                            ? 'border-emerald-500 bg-emerald-50/80 text-emerald-950 font-medium ring-1 ring-emerald-500 shadow-xs'
+                            : 'border-neutral-200/90 bg-white text-neutral-700 hover:border-neutral-300 hover:bg-neutral-50/80 hover:text-neutral-900'
+                        }`}
+                      >
+                        <span className="flex-1 pr-3 leading-snug">
+                          {promptText}
+                        </span>
+                        {/* Small SVG arrow icon on the right */}
+                        <span className={`shrink-0 transition-transform ${
+                          isPromptSelected
+                            ? 'text-emerald-600'
+                            : 'text-neutral-400 group-hover:text-emerald-600 group-hover:translate-x-0.5'
+                        }`}>
+                          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M5 5v6a4 4 0 0 0 4 4h10" />
+                            <path d="m15 11 4 4-4 4" />
+                          </svg>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Selected prompt banner indicator */}
+              {selectedPrompt && (
+                <div className="flex items-center gap-1.5 text-xs text-emerald-900 bg-emerald-50/90 p-2.5 rounded-xl border border-emerald-200">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                  <span className="truncate">
+                    Selected Prompt: <strong>"{selectedPrompt}"</strong>
+                  </span>
+                </div>
+              )}
+
+              {/* Generate Notes Button */}
+              <div className="space-y-2 pt-1">
+                <Button
+                  icon={isGeneratingNote ? LoaderCircle : Sparkles}
+                  className="w-full h-11 text-sm font-semibold rounded-xl bg-primary-600 hover:bg-primary-700 text-white shadow-sm disabled:opacity-60"
+                  disabled={
+                    isGeneratingNote ||
+                    !noteTopic.trim()
+                  }
+                  onClick={handleGenerateNotes}
+                >
+                  {isGeneratingNote
+                    ? (type === 'formulas' ? `Generating Formula Sheet… (${noteGenElapsed}s)` : `Generating Smart Notes… (${noteGenElapsed}s)`)
+                    : selectedPrompt
+                    ? 'Generate Notes with Prompt'
+                    : (type === 'formulas' ? 'Generate Formula Sheet' : 'Generate Smart Notes')}
+                </Button>
+
+                {notesError && <p className="text-xs text-error-600">{notesError}</p>}
+              </div>
+
+            </div>
+
+          </div>
+        </div>
+
+        {/* ──────────────── Right Section (lg:col-span-7): Notes Generator i.e. Chapter Summary Viewer ──────────────── */}
+        <div className="lg:col-span-7">
+          {activeNote ? (
+            <Card className="flex flex-col border border-neutral-200/90 shadow-sm bg-white overflow-hidden rounded-3xl">
+              {/* Top Executive Toolbar */}
+              <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-3.5 border-b border-neutral-200/80 bg-neutral-50/50">
+                <div className="flex flex-wrap items-center gap-2 min-w-0">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-primary-100 text-primary-800 border border-primary-200/80 shadow-2xs">
+                    {type === 'formulas' || activeNote.type === 'formulas' ? <Zap className="h-3 w-3 text-amber-500" /> : <Sparkles className="h-3 w-3 text-primary-600" />}
+                    {(type === 'formulas' || activeNote.type === 'formulas') ? 'Formula Sheet' : (noteTypes.find(nt => nt.id === (activeNote.type || type))?.label || 'Notes')}
+                  </span>
+
+                  {activeNote.chapter && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-neutral-200/70 text-neutral-800">
+                      Topic: {activeNote.chapter}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {/* Copy Button */}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={copiedNote ? Check : Copy}
+                    onClick={async () => {
+                      if (!activeNote?.content) return;
+                      try {
+                        if (navigator?.clipboard?.writeText) {
+                          await navigator.clipboard.writeText(activeNote.content);
+                        } else {
+                          const textArea = document.createElement('textarea');
+                          textArea.value = activeNote.content;
+                          textArea.style.position = 'fixed';
+                          textArea.style.opacity = '0';
+                          document.body.appendChild(textArea);
+                          textArea.focus();
+                          textArea.select();
+                          document.execCommand('copy');
+                          document.body.removeChild(textArea);
+                        }
+                        setCopiedNote(true);
+                        pushToast('Note content copied to clipboard!', 'success');
+                        setTimeout(() => setCopiedNote(false), 2000);
+                      } catch {
+                        try {
+                          const textArea = document.createElement('textarea');
+                          textArea.value = activeNote.content;
+                          textArea.style.position = 'fixed';
+                          textArea.style.opacity = '0';
+                          document.body.appendChild(textArea);
+                          textArea.focus();
+                          textArea.select();
+                          document.execCommand('copy');
+                          document.body.removeChild(textArea);
+                          setCopiedNote(true);
+                          pushToast('Note content copied to clipboard!', 'success');
+                          setTimeout(() => setCopiedNote(false), 2000);
+                        } catch {
+                          pushToast('Failed to copy note. Please copy manually.', 'error');
+                        }
+                      }
+                    }}
+                    title="Copy full note"
+                    className={copiedNote ? 'text-emerald-700 bg-emerald-50' : ''}
+                  >
+                    {copiedNote ? 'Copied' : 'Copy'}
+                  </Button>
+
+                  {/* Print Button: Prints ONLY the generated notes */}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={Printer}
+                    onClick={() => {
+                      if (!activeNote) return;
+                      const noteElement = document.getElementById('printable-note-content');
+                      const noteHtml = noteElement ? noteElement.innerHTML : (activeNote.content || '').replace(/\n/g, '<br/>');
+
+                      const iframe = document.createElement('iframe');
+                      iframe.style.position = 'fixed';
+                      iframe.style.right = '0';
+                      iframe.style.bottom = '0';
+                      iframe.style.width = '0';
+                      iframe.style.height = '0';
+                      iframe.style.border = '0';
+                      document.body.appendChild(iframe);
+
+                      const iframeDoc = iframe.contentWindow?.document;
+                      if (!iframeDoc) return;
+
+                      iframeDoc.open();
+                      iframeDoc.write(`
+                        <!DOCTYPE html>
+                        <html>
+                          <head>
+                            <title>${activeNote.title || 'Generated Notes'} - EduRAG AI</title>
+                            <meta charset="utf-8" />
+                            <style>
+                              @page {
+                                size: A4 portrait;
+                                margin: 18mm 16mm;
+                              }
+                              * { box-sizing: border-box; }
+                              body {
+                                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                                color: #1e293b;
+                                line-height: 1.6;
+                                margin: 0;
+                                padding: 24px;
+                                background: #ffffff;
+                                -webkit-print-color-adjust: exact;
+                                print-color-adjust: exact;
+                              }
+                              .header-meta {
+                                margin-bottom: 24px;
+                                padding-bottom: 16px;
+                                border-bottom: 2px solid #e2e8f0;
+                              }
+                              .badge {
+                                display: inline-block;
+                                padding: 4px 12px;
+                                background: #e0f2fe;
+                                color: #0369a1;
+                                border-radius: 9999px;
+                                font-size: 11px;
+                                font-weight: 700;
+                                text-transform: uppercase;
+                                letter-spacing: 0.05em;
+                                margin-bottom: 10px;
+                              }
+                              h1 {
+                                font-size: 24px;
+                                color: #0f172a;
+                                margin: 0 0 8px 0;
+                                font-weight: 800;
+                              }
+                              .meta-info {
+                                font-size: 13px;
+                                color: #64748b;
+                                margin: 4px 0;
+                              }
+                              h2 {
+                                font-size: 18px;
+                                color: #1e3a8a;
+                                margin-top: 24px;
+                                margin-bottom: 10px;
+                                border-bottom: 1px solid #e2e8f0;
+                                padding-bottom: 4px;
+                              }
+                              h3 {
+                                font-size: 15px;
+                                color: #334155;
+                                margin-top: 16px;
+                                margin-bottom: 6px;
+                              }
+                              p { margin: 8px 0; }
+                              table {
+                                width: 100%;
+                                border-collapse: collapse;
+                                margin: 16px 0;
+                              }
+                              th, td {
+                                border: 1px solid #cbd5e1;
+                                padding: 8px 12px;
+                                text-align: left;
+                                font-size: 13px;
+                              }
+                              th {
+                                background-color: #f8fafc;
+                                font-weight: 600;
+                                color: #0f172a;
+                              }
+                              code {
+                                font-family: Consolas, monospace;
+                                background: #f1f5f9;
+                                padding: 2px 5px;
+                                border-radius: 4px;
+                                font-size: 12px;
+                              }
+                              pre {
+                                background: #f8fafc;
+                                border: 1px solid #e2e8f0;
+                                padding: 12px;
+                                border-radius: 6px;
+                                overflow-x: auto;
+                              }
+                              .footer {
+                                margin-top: 40px;
+                                padding-top: 12px;
+                                border-top: 1px solid #e2e8f0;
+                                font-size: 11px;
+                                color: #94a3b8;
+                                display: flex;
+                                justify-content: space-between;
+                              }
+                              @media print {
+                                body { padding: 0; }
+                              }
+                            </style>
+                          </head>
+                          <body>
+                            <div class="header-meta">
+                              <span class="badge">${activeNote.type === 'formulas' ? 'Formula Sheet' : 'Smart Notes'}</span>
+                              <h1>${activeNote.title || 'Generated Notes'}</h1>
+                              ${activeNote.chapter ? `<div class="meta-info"><strong>Topic / Chapter:</strong> ${activeNote.chapter}</div>` : ''}
+                              ${activeNote.course ? `<div class="meta-info"><strong>Course:</strong> ${activeNote.course}</div>` : ''}
+                              <div class="meta-info" style="font-size: 11px; color: #94a3b8;">
+                                Generated by EduRAG AI Study System &bull; ${new Date().toLocaleDateString()}
+                              </div>
+                            </div>
+                            <div class="note-body">
+                              ${noteHtml}
+                            </div>
+                            <div class="footer">
+                              <span>EduRAG AI Study System</span>
+                              <span>Printed Notes Document</span>
+                            </div>
+                          </body>
+                        </html>
+                      `);
+                      iframeDoc.close();
+
+                      setTimeout(() => {
+                        iframe.contentWindow?.focus();
+                        iframe.contentWindow?.print();
+                        setTimeout(() => {
+                          if (document.body.contains(iframe)) {
+                            document.body.removeChild(iframe);
+                          }
+                        }, 2500);
+                      }, 400);
+                    }}
+                    title="Print generated notes only"
+                  >
+                    Print
+                  </Button>
+
+                  {/* Export Button: Asks student which format (.pdf, .docx, .pptx, .txt, .md) */}
                   <Button
                     variant="ghost"
                     size="sm"
                     icon={Download}
-                    onClick={() => {
-                      if (!activeNote) return;
-                      const blob = new Blob([activeNote.content], { type: 'text/plain;charset=utf-8' });
-                      const url = URL.createObjectURL(blob);
-                      const link = document.createElement('a');
-                      link.href = url;
-                      link.download = `${activeNote.title.replace(/[^a-z0-9]+/gi, '_')}.txt`;
-                      link.click();
-                      URL.revokeObjectURL(url);
-                    }}
+                    onClick={() => setShowExportModal(true)}
+                    title="Export in .pdf, .docx, .pptx, .txt, .md"
                   >
                     Export
                   </Button>
 
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    icon={BookmarkIcon}
-                    onClick={() => {
-                      if (activeNote) {
-                        setEditingNote(true);
-                        setNoteDraft(activeNote.content);
-                      }
-                    }}
-                  >
-                    Edit
-                  </Button>
-                  {editingNote && (
-                    <Button
-                      size="sm"
-                      onClick={async () => {
-                        if (!activeNote) return;
-                        const updated = { ...activeNote, content: noteDraft, updatedAt: new Date().toISOString() };
-                        if (!await updateNote(updated)) {
-                          setNotesError('The note could not be updated.');
-                          return;
-                        }
-                        setActiveNote(updated);
-                        setNotes(current => current.map(item => item.id === updated.id ? updated : item));
-                        setEditingNote(false);
-                      }}
-                    >
-                      Save
-                    </Button>
-                  )}
+                  {/* Delete Button: Asks confirmation and deletes properly */}
                   {activeNote && (
                     <Button
                       variant="ghost"
                       size="sm"
                       icon={Trash2}
-                      onClick={async () => {
-                        if (!await deleteNote(activeNote.id)) {
-                          setNotesError('The note could not be deleted.');
-                          return;
-                        }
-                        const remaining = notes.filter(item => item.id !== activeNote.id);
-                        setNotes(remaining);
-                        setActiveNote(remaining[0] || null);
-                        setGenerated(remaining.length > 0);
-                      }}
+                      onClick={() => setShowDeleteNoteConfirm(true)}
+                      title="Delete note"
+                      className="text-error-600 hover:text-error-700 hover:bg-error-50"
                     >
                       Delete
                     </Button>
@@ -2870,28 +4461,49 @@ export function StudentNotes() {
                 </div>
               </div>
 
-<div className="p-6 flex-1 overflow-y-auto">
-                 <h2 className="text-xl font-bold font-display text-neutral-900 mb-4">
-                   {activeNote?.title || `${noteTypes.find(item => item.id === type)?.label} — ${noteTopic || uploadedNoteFiles[0]?.name || 'Study Material'}`}
-                 </h2>
-
-                 <div className="prose prose-sm max-w-none">
-                   {editingNote ? (
-                     <textarea
-                       value={noteDraft}
-                       onChange={event => setNoteDraft(event.target.value)}
-                       className="w-full min-h-80 rounded-xl border border-neutral-200 p-4 text-sm text-neutral-700 outline-none focus:border-primary-400"
-                     />
-                   ) : (
-                     <pre className="whitespace-pre-wrap font-sans text-sm text-neutral-700 leading-relaxed">
-                       {activeNote?.content || ''}
-                     </pre>
-                   )}
-                 </div>
-               </div>
+              {/* Note Content View Area: Clean structured viewer with printable ID */}
+              <div id="printable-note-content" className="p-6 md:p-8 flex-1 overflow-y-auto max-h-[820px]">
+                <SmartNoteRenderer
+                  content={activeNote.content}
+                  title={activeNote.title}
+                  type={type === 'formulas' ? 'formulas' : (activeNote.type || type)}
+                  topic={activeNote.chapter}
+                  course={activeNote.course}
+                />
+              </div>
+            </Card>
+          ) : (
+            <Card className="flex flex-col items-center justify-center p-12 border border-neutral-200/90 shadow-sm bg-white rounded-3xl text-center min-h-[480px]">
+              <div className={`h-16 w-16 rounded-2xl flex items-center justify-center mb-4 ${
+                type === 'formulas' ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'
+              }`}>
+                {type === 'formulas' ? <Zap className="h-8 w-8" /> : <FileText className="h-8 w-8" />}
+              </div>
+              <h3 className="text-lg font-bold font-display text-neutral-900 mb-1">
+                {type === 'formulas' ? 'Formula Sheet Generator' : 'Chapter Summary & Smart Notes'}
+              </h3>
+              <p className="text-sm text-neutral-500 max-w-sm mb-6 leading-relaxed">
+                {type === 'formulas'
+                  ? 'Add your course document on the left to extract and generate clean structured formula cards with step-by-step worked examples.'
+                  : "Add a file and pick a prompt on the left to generate your complete chapter summary notes."}
+              </p>
+              <Button
+                icon={type === 'formulas' ? Zap : Sparkles}
+                onClick={handleGenerateNotes}
+                disabled={
+                  isGeneratingNote ||
+                  (!noteTopic.trim() &&
+                    uploadedNoteFiles.length === 0 &&
+                    (!selectedIndexedId || (selectedIndexedId === 'all' && indexedMaterials.length === 0)) &&
+                    !selectedPrompt)
+                }
+              >
+                {type === 'formulas' ? 'Generate Formula Sheet' : 'Generate Smart Notes'}
+              </Button>
             </Card>
           )}
         </div>
+
       </div>
 
       {/* Recently generated notes */}
@@ -2901,7 +4513,20 @@ export function StudentNotes() {
         <Card>
           <CardHeader
             title="Recently Generated Notes"
+            subtitle={`${notes.length} note${notes.length === 1 ? '' : 's'} available`}
             icon={StickyNote}
+            action={
+              <Button
+                variant="outline"
+                size="sm"
+                icon={Trash2}
+                onClick={() => setShowDeleteAllConfirm(true)}
+                className="text-error-600 border-error-200 hover:bg-error-50 hover:border-error-300 transition-colors shadow-2xs font-semibold"
+                title="Delete all recently generated notes"
+              >
+                Delete All
+              </Button>
+            }
           />
 
           <CardBody>
@@ -2920,30 +4545,333 @@ export function StudentNotes() {
                       {note.title}
                     </p>
 
-                    <p className="text-xs text-neutral-500">
-                      {note.course} Â· {note.chapter} Â·{' '}
-                      {note.createdAt}
+                    <p className="text-xs text-neutral-500 flex items-center gap-1.5 flex-wrap">
+                      <span>{note.course}</span>
+                      <span>·</span>
+                      <span>{note.chapter}</span>
+                      <span>·</span>
+                      <span className="inline-flex items-center gap-1 text-neutral-600 font-medium">
+                        <Clock className="h-3 w-3 text-neutral-400" />
+                        {formatNoteDateTime(note.createdAt)}
+                      </span>
                     </p>
                   </div>
 
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    icon={Download}
-                    onClick={() => {
-                      setActiveNote(note);
-                      setGenerated(true);
-                      setNoteDraft(note.content);
-                    }}
-                  >
-                    View
-                  </Button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      title="Delete note"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        try {
+                          await deleteNote(note.id);
+                        } catch (err) {
+                          console.warn('Note delete error:', err);
+                        }
+                        const remaining = notes.filter(item => item.id !== note.id);
+                        setNotes(remaining);
+                        if (activeNote?.id === note.id) {
+                          setActiveNote(remaining[0] || null);
+                          setGenerated(remaining.length > 0);
+                        }
+                        pushToast(`Deleted "${note.title}".`, 'success');
+                      }}
+                      className="p-1.5 rounded-lg text-neutral-400 hover:text-error-600 hover:bg-error-50 transition-colors cursor-pointer"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={Download}
+                      onClick={() => {
+                        setActiveNote(note);
+                        setGenerated(true);
+                      }}
+                    >
+                      View
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>
           </CardBody>
         </Card>
       )}
+
+      {/* Export Format Selection Modal */}
+      {showExportModal && activeNote && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-sm overflow-hidden"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setShowExportModal(false)}
+        >
+          <div
+            className="relative bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-[460px] border border-neutral-200/90 flex flex-col max-h-[min(90vh,590px)] overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header - Fixed at Top */}
+            <div className="flex items-center justify-between px-5 py-3.5 sm:py-4 border-b border-neutral-100 bg-white shrink-0">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="h-9 w-9 rounded-xl bg-primary-50 text-primary-600 flex items-center justify-center shrink-0">
+                  <Download className="h-4.5 w-4.5" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-sm sm:text-base font-bold text-neutral-900 font-display leading-tight truncate">Export Note</h3>
+                  <p className="text-[11px] sm:text-xs text-neutral-500 truncate">Choose the format to download your generated note</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowExportModal(false)}
+                className="h-8 w-8 rounded-full flex items-center justify-center text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 transition-colors cursor-pointer shrink-0 ml-2"
+                title="Close"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Modal Body - Only this content scrolls */}
+            <div className="px-5 py-3.5 sm:py-4 overflow-y-auto flex-1 overscroll-contain space-y-2.5">
+              {/* Note info banner */}
+              <div className="p-2.5 sm:p-3 bg-neutral-50 rounded-xl border border-neutral-200/80 flex items-center justify-between gap-2">
+                <div className="min-w-0 pr-2">
+                  <div className="text-xs font-semibold text-neutral-800 truncate">{activeNote.title}</div>
+                  {activeNote.chapter && (
+                    <div className="text-[11px] text-neutral-500 truncate">Topic: {activeNote.chapter}</div>
+                  )}
+                </div>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary-100 text-primary-800 shrink-0 uppercase tracking-wide">
+                  {activeNote.type === 'formulas' ? 'Formulas' : 'Notes'}
+                </span>
+              </div>
+
+              {/* Format selection cards */}
+              <div className="space-y-2">
+                {/* PDF */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowExportModal(false);
+                    downloadPdfDirect(activeNote);
+                    pushToast('Downloaded as PDF (.pdf)', 'success');
+                  }}
+                  className="w-full flex items-center gap-3 p-2.5 sm:p-3 rounded-xl border border-neutral-200 bg-white hover:border-rose-400 hover:bg-rose-50/40 hover:shadow-xs transition-all text-left cursor-pointer group"
+                >
+                  <div className="h-9 w-9 rounded-lg bg-rose-100 text-rose-700 flex items-center justify-center font-bold text-xs shrink-0 group-hover:scale-105 transition-transform">
+                    PDF
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs sm:text-sm font-semibold text-neutral-900 group-hover:text-rose-900 flex items-center gap-1.5">
+                      <span>PDF Document</span>
+                      <span className="text-[10px] font-normal text-neutral-400">(.pdf)</span>
+                    </div>
+                    <div className="text-[11px] text-neutral-500 truncate">
+                      Direct download .pdf document formatted for studying
+                    </div>
+                  </div>
+                  <ChevronRight className="h-4 w-4 text-neutral-400 group-hover:text-rose-600 group-hover:translate-x-0.5 transition-all shrink-0" />
+                </button>
+
+                {/* DOCX */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowExportModal(false);
+                    const safeTitle = (activeNote.title || 'notes').replace(/[^a-z0-9_-]+/gi, '_').toLowerCase();
+                    const wordContent = generateWordContent(activeNote);
+                    const blob = new Blob([wordContent], { type: 'application/msword;charset=utf-8' });
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = `${safeTitle}.docx`;
+                    link.click();
+                    URL.revokeObjectURL(url);
+                    pushToast('Downloaded as Word Document (.docx)', 'success');
+                  }}
+                  className="w-full flex items-center gap-3 p-2.5 sm:p-3 rounded-xl border border-neutral-200 bg-white hover:border-blue-400 hover:bg-blue-50/40 hover:shadow-xs transition-all text-left cursor-pointer group"
+                >
+                  <div className="h-9 w-9 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-xs shrink-0 group-hover:scale-105 transition-transform">
+                    DOCX
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs sm:text-sm font-semibold text-neutral-900 group-hover:text-blue-900 flex items-center gap-1.5">
+                      <span>Microsoft Word</span>
+                      <span className="text-[10px] font-normal text-neutral-400">(.docx)</span>
+                    </div>
+                    <div className="text-[11px] text-neutral-500 truncate">
+                      Direct download .docx Word document with headings and tables
+                    </div>
+                  </div>
+                  <ChevronRight className="h-4 w-4 text-neutral-400 group-hover:text-blue-600 group-hover:translate-x-0.5 transition-all shrink-0" />
+                </button>
+
+                {/* PPTX */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowExportModal(false);
+                    const safeTitle = (activeNote.title || 'notes').replace(/[^a-z0-9_-]+/gi, '_').toLowerCase();
+                    const pptContent = generatePptContent(activeNote);
+                    const blob = new Blob([pptContent], { type: 'application/vnd.ms-powerpoint;charset=utf-8' });
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = `${safeTitle}.pptx`;
+                    link.click();
+                    URL.revokeObjectURL(url);
+                    pushToast('Downloaded as PowerPoint Presentation (.pptx)', 'success');
+                  }}
+                  className="w-full flex items-center gap-3 p-2.5 sm:p-3 rounded-xl border border-neutral-200 bg-white hover:border-amber-400 hover:bg-amber-50/40 hover:shadow-xs transition-all text-left cursor-pointer group"
+                >
+                  <div className="h-9 w-9 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center font-bold text-xs shrink-0 group-hover:scale-105 transition-transform">
+                    PPTX
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs sm:text-sm font-semibold text-neutral-900 group-hover:text-amber-900 flex items-center gap-1.5">
+                      <span>PowerPoint Slides</span>
+                      <span className="text-[10px] font-normal text-neutral-400">(.pptx)</span>
+                    </div>
+                    <div className="text-[11px] text-neutral-500 truncate">
+                      Direct download .pptx presentation slide deck
+                    </div>
+                  </div>
+                  <ChevronRight className="h-4 w-4 text-neutral-400 group-hover:text-amber-600 group-hover:translate-x-0.5 transition-all shrink-0" />
+                </button>
+
+                {/* TXT */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowExportModal(false);
+                    const safeTitle = (activeNote.title || 'notes').replace(/[^a-z0-9_-]+/gi, '_').toLowerCase();
+                    const textContent = generatePlainTextContent(activeNote);
+                    const blob = new Blob([textContent], { type: 'text/plain;charset=utf-8' });
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = `${safeTitle}.txt`;
+                    link.click();
+                    URL.revokeObjectURL(url);
+                    pushToast('Downloaded as Plain Text (.txt)', 'success');
+                  }}
+                  className="w-full flex items-center gap-3 p-2.5 sm:p-3 rounded-xl border border-neutral-200 bg-white hover:border-emerald-400 hover:bg-emerald-50/40 hover:shadow-xs transition-all text-left cursor-pointer group"
+                >
+                  <div className="h-9 w-9 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-xs shrink-0 group-hover:scale-105 transition-transform">
+                    TXT
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs sm:text-sm font-semibold text-neutral-900 group-hover:text-emerald-900 flex items-center gap-1.5">
+                      <span>Plain Text</span>
+                      <span className="text-[10px] font-normal text-neutral-400">(.txt)</span>
+                    </div>
+                    <div className="text-[11px] text-neutral-500 truncate">
+                      Direct download .txt clean plain text notes
+                    </div>
+                  </div>
+                  <ChevronRight className="h-4 w-4 text-neutral-400 group-hover:text-emerald-600 group-hover:translate-x-0.5 transition-all shrink-0" />
+                </button>
+
+                {/* MD */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowExportModal(false);
+                    const safeTitle = (activeNote.title || 'notes').replace(/[^a-z0-9_-]+/gi, '_').toLowerCase();
+                    const blob = new Blob([activeNote.content], { type: 'text/markdown;charset=utf-8' });
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = `${safeTitle}.md`;
+                    link.click();
+                    URL.revokeObjectURL(url);
+                    pushToast('Downloaded as Markdown (.md)', 'success');
+                  }}
+                  className="w-full flex items-center gap-3 p-2.5 sm:p-3 rounded-xl border border-neutral-200 bg-white hover:border-purple-400 hover:bg-purple-50/40 hover:shadow-xs transition-all text-left cursor-pointer group"
+                >
+                  <div className="h-9 w-9 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center font-bold text-xs shrink-0 group-hover:scale-105 transition-transform">
+                    MD
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs sm:text-sm font-semibold text-neutral-900 group-hover:text-purple-900 flex items-center gap-1.5">
+                      <span>Markdown Document</span>
+                      <span className="text-[10px] font-normal text-neutral-400">(.md)</span>
+                    </div>
+                    <div className="text-[11px] text-neutral-500 truncate">
+                      Direct download .md Markdown document
+                    </div>
+                  </div>
+                  <ChevronRight className="h-4 w-4 text-neutral-400 group-hover:text-purple-600 group-hover:translate-x-0.5 transition-all shrink-0" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Footer - Fixed at Bottom */}
+            <div className="px-5 py-3 border-t border-neutral-100 bg-neutral-50/50 flex items-center justify-end shrink-0">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowExportModal(false)}
+              >
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm Delete Single Note Dialog */}
+      <ConfirmDialog
+        open={showDeleteNoteConfirm}
+        title="Delete Note?"
+        description={`Are you sure you want to permanently delete "${activeNote?.title || 'this note'}"? This action cannot be undone.`}
+        confirmLabel="Delete"
+        confirmVariant="danger"
+        loading={isDeletingNote}
+        onConfirm={async () => {
+          if (!activeNote) return;
+          setIsDeletingNote(true);
+          try {
+            const deletedTitle = activeNote.title;
+            const deletedId = activeNote.id;
+            const ok = await deleteNote(deletedId);
+            if (!ok) {
+              setNotesError('The note could not be deleted from storage.');
+              pushToast('The note could not be deleted.', 'error');
+              return;
+            }
+            const remaining = notes.filter(item => item.id !== deletedId);
+            setNotes(remaining);
+            setActiveNote(remaining.length > 0 ? remaining[0] : null);
+            setGenerated(remaining.length > 0);
+            setShowDeleteNoteConfirm(false);
+            pushToast(`Deleted note "${deletedTitle}".`, 'success');
+          } catch (err) {
+            console.error('Delete note error:', err);
+            pushToast('Failed to delete note. Please try again.', 'error');
+          } finally {
+            setIsDeletingNote(false);
+          }
+        }}
+        onCancel={() => setShowDeleteNoteConfirm(false)}
+      />
+
+      {/* Confirm Delete All Dialog */}
+      <ConfirmDialog
+        open={showDeleteAllConfirm}
+        title="Delete All Notes?"
+        description={`Are you sure you want to permanently delete all ${notes.length} recently generated notes? This action cannot be undone.`}
+        confirmLabel="Delete All"
+        confirmVariant="danger"
+        loading={isDeletingAll}
+        onConfirm={handleDeleteAllNotes}
+        onCancel={() => setShowDeleteAllConfirm(false)}
+      />
+
+      {/* Toast Notifications */}
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }

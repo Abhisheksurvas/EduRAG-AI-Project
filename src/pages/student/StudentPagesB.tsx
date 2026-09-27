@@ -34,6 +34,7 @@ import {
   deleteAllQuizzes,
   deleteAllUnattemptedQuizzes,
   deleteAllQuizAttempts,
+  notifyDocumentSelected,
 } from '@/lib/dataService';
 import {
   suggestedQuestions,
@@ -2174,13 +2175,18 @@ useEffect(() => {
                 onChange={e => {
                   const id = e.target.value;
                   setSelectedIndexedId(id);
+                  const found = indexedMaterials.find(m => m.id === id);
+                  const docName = id === 'all' ? 'All Indexed Documents' : (found?.name || id);
+
+                  // Notify backend server immediately so the selected document name is shown in backend server logs
+                  notifyDocumentSelected(id, docName).catch(console.warn);
+
                   if (id === 'all') {
                     if (!genTopic.trim()) {
                       setGenTopic('All Documents');
                       setGenError(null);
                     }
                   } else if (id && !genTopic.trim()) {
-                    const found = indexedMaterials.find(m => m.id === id);
                     if (found?.name) {
                       setGenTopic(found.name.replace(/\.[^/.]+$/, ''));
                       setGenError(null);
@@ -2196,6 +2202,26 @@ useEffect(() => {
                   </option>
                 ))}
               </select>
+
+              {/* Show selected document name indicator */}
+              {selectedIndexedId && (
+                <div className="mt-2.5 flex items-center justify-between p-2.5 rounded-xl bg-emerald-50/90 border border-emerald-200 text-xs text-emerald-900 shadow-sm animate-fadeIn">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <FileText className="h-4 w-4 text-emerald-600 shrink-0" />
+                    <span className="truncate">
+                      Selected Document:{' '}
+                      <strong className="font-semibold text-emerald-950">
+                        {selectedIndexedId === 'all'
+                          ? 'All Indexed Documents'
+                          : (indexedMaterials.find(m => m.id === selectedIndexedId)?.name || selectedIndexedId)}
+                      </strong>
+                    </span>
+                  </div>
+                  <span className="shrink-0 inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-700 border border-emerald-200">
+                    Active in Backend
+                  </span>
+                </div>
+              )}
               {indexedMaterials.length === 0 && (
                 <p className="mt-1.5 text-xs text-neutral-400">
                   No indexed documents yet — upload one above and it will appear here.

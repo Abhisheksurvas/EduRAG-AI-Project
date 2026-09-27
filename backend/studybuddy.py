@@ -132,6 +132,10 @@ Relevant Study Material Context (from this turn):
 Student's Question:
 {q}"""
 
+        is_notes_request = bool(
+            re.search(r'generate\s+.*(?:summary|key\s*points|definitions|formula|notes)|chapter\s+summary|formula\s+sheet|high-yield', q, re.IGNORECASE)
+        )
+
         if json_requested:
             # JSON-only mode: skip prose-style "Final-answer requirements" that
             # would conflict with the strict "respond with ONLY JSON" system prompt.
@@ -139,6 +143,14 @@ Student's Question:
                 user_prompt += """
 
 For this quiz, use only facts explicitly supported by the provided study-material context. Do not add facts, invent details, or cite material that is not in the context. Each question must be grounded in the extracted document chunks above."""
+        elif is_notes_request:
+            user_prompt += """
+
+Final-answer requirements for Study Notes:
+- Synthesize and generate comprehensive, high-yield study notes strictly grounded in the Relevant Study Material Context provided above.
+- Extract the core concepts, principles, algorithms, definitions, and equations directly from the document context.
+- Structure your response cleanly with clear Markdown headings (##, ###), bullet points, and code/math blocks.
+- Do NOT begin with conversational greetings, preambles, or disclaimers. Begin immediately with the specified main title heading (# ...)."""
         else:
             user_prompt += """
 
@@ -170,10 +182,15 @@ For this quiz, use only facts in the provided study-material context. Do not add
 
         if self.client is not None and self.api_key:
             if self.api_key.startswith("sk-or-"):
-                configured_model = os.getenv("AI_MODEL", "openrouter/free")
-                models = [configured_model]
-                if configured_model != "openrouter/free":
-                    models.append("openrouter/free")
+                configured_model = os.getenv("AI_MODEL", "meta-llama/llama-3.2-3b-instruct:free")
+                models = [
+                    configured_model,
+                    "meta-llama/llama-3.2-3b-instruct:free",
+                    "meta-llama/llama-3.1-8b-instruct:free",
+                    "google/gemini-2.0-flash-exp:free",
+                    "qwen/qwen-2.5-72b-instruct:free",
+                    "mistralai/mistral-7b-instruct:free",
+                ]
             else:
                 models = [os.getenv("AI_MODEL", "gpt-4o-mini"), "gpt-4o"]
 
@@ -187,7 +204,7 @@ For this quiz, use only facts in the provided study-material context. Do not add
                     response = self.client.chat.completions.create(
                         model=model_name,
                         messages=messages,
-                        temperature=temperature if temperature is not None else 0.4,
+                        temperature=temperature if temperature is not None else 0.25,
                         max_tokens=max_tokens or (900 if json_requested else 2048),
                         timeout=request_timeout,
                     )
@@ -204,6 +221,9 @@ For this quiz, use only facts in the provided study-material context. Do not add
 
         if json_requested:
             return self._local_quiz_answer(topic=topic, context=context, difficulty=difficulty)
+
+        if is_notes_request:
+            return ""
 
         return self._local_answer(q)
 
