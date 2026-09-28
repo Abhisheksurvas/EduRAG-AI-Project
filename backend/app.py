@@ -1122,7 +1122,12 @@ class EduRAGHandler(BaseHTTPRequestHandler):
             if payload is None:
                 return
             user_id = payload.get("sub", "")
-            self._write_json(load_many("notes", [], {"userId": user_id}))
+            raw_notes = load_many("notes", [], {"userId": user_id})
+            try:
+                raw_notes.sort(key=lambda n: str(n.get("createdAt") or ""), reverse=True)
+            except Exception:
+                pass
+            self._write_json(raw_notes)
             return
 
         # ---- notes POST ----

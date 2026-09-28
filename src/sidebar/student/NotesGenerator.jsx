@@ -64,14 +64,7 @@ export default function NotesGenerator() {
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const promptOptions = [
-    'Summarize this into five key takeaways',
-    'Create a concise meeting minutes draft from this',
-    'Make 10 flashcards from this material',
-    'Build a timeline and milestones from this',
-    'Explain this in simple terms for a beginner',
-    'Compare the main options presented here',
-  ];
+
 
   // Load already-indexed materials on mount and periodically
   useEffect(() => {
@@ -424,57 +417,6 @@ export default function NotesGenerator() {
                 </select>
               </div>
 
-              {/* Pick a Prompt section */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-sm font-semibold text-neutral-700">
-                    Pick a Prompt
-                  </label>
-                  {selectedPrompt && (
-                    <button
-                      type="button"
-                      onClick={() => setSelectedPrompt(null)}
-                      className="text-xs text-neutral-400 hover:text-neutral-600 underline cursor-pointer"
-                    >
-                      Clear prompt
-                    </button>
-                  )}
-                </div>
-
-                <div className="space-y-2">
-                  {promptOptions.map((promptText) => {
-                    const isPromptSelected = selectedPrompt === promptText;
-                    return (
-                      <button
-                        key={promptText}
-                        type="button"
-                        onClick={() => {
-                          setSelectedPrompt(prev => prev === promptText ? null : promptText);
-                        }}
-                        className={`w-full flex items-center justify-between p-3 rounded-xl border text-xs sm:text-sm text-left transition-all cursor-pointer group ${
-                          isPromptSelected
-                            ? 'border-emerald-500 bg-emerald-50/80 text-emerald-950 font-medium ring-1 ring-emerald-500 shadow-xs'
-                            : 'border-neutral-200/90 bg-white text-neutral-700 hover:border-neutral-300 hover:bg-neutral-50/80 hover:text-neutral-900'
-                        }`}
-                      >
-                        <span className="flex-1 pr-3 leading-snug">
-                          {promptText}
-                        </span>
-                        <span className={`shrink-0 transition-transform ${
-                          isPromptSelected
-                            ? 'text-emerald-600'
-                            : 'text-neutral-400 group-hover:text-emerald-600 group-hover:translate-x-0.5'
-                        }`}>
-                          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M5 5v6a4 4 0 0 0 4 4h10" />
-                            <path d="m15 11 4 4-4 4" />
-                          </svg>
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
 
               {/* File upload */}
               <div className="space-y-2">
@@ -657,19 +599,27 @@ export default function NotesGenerator() {
           </Card>
         </div>
 
-        {/* Right column — Generated Notebooks */}
+        {/* Right column — Generated Notes */}
         <div className="space-y-6">
           <Card>
-            <CardHeader title="Generated Notebooks" />
+            <CardHeader title="Generated Notes" />
             <CardBody className="space-y-3 pt-2 text-sm text-neutral-600">
-              <div className="p-3 border border-neutral-100 rounded-xl hover:bg-neutral-50 transition-colors cursor-pointer">
-                <div className="font-semibold text-neutral-900">Divide &amp; Conquer notes</div>
-                <div className="text-xs text-neutral-400 mt-0.5">Formatted yesterday · 3 pages</div>
-              </div>
-              <div className="p-3 border border-neutral-100 rounded-xl hover:bg-neutral-50 transition-colors cursor-pointer">
-                <div className="font-semibold text-neutral-900">Database Indexing B-Trees</div>
-                <div className="text-xs text-neutral-400 mt-0.5">Formatted 3d ago · 2 pages</div>
-              </div>
+              {recentNotes.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <StickyNote className="h-10 w-10 text-neutral-300 mb-2" />
+                  <p className="font-medium text-neutral-700">No notes generated yet</p>
+                  <p className="text-xs text-neutral-400 mt-1 max-w-xs mx-auto">
+                    Fill in the details on the left and click Generate Summary to view notes here.
+                  </p>
+                </div>
+              ) : (
+                recentNotes.map(n => (
+                  <div key={n.id} className="p-3 border border-neutral-100 rounded-xl hover:bg-neutral-50 transition-colors cursor-pointer">
+                    <div className="font-semibold text-neutral-900">{n.title}</div>
+                    <div className="text-xs text-neutral-400 mt-0.5">{n.noteType} · {formatDateTime(n.generatedAt)}</div>
+                  </div>
+                ))
+              )}
             </CardBody>
           </Card>
         </div>

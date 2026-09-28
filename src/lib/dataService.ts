@@ -227,22 +227,34 @@ export async function findMaterialsByTopic(topic: string): Promise<any[]> {
 import { generateAcademicNotes, type NoteType } from './notesGeneratorKnowledge';
 
 export async function fetchNotes() {
+  const sortByNewest = (list: any[]) => {
+    return [...list].sort((a, b) => {
+      const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      if (timeA !== timeB) return timeB - timeA;
+      const idA = typeof a.id === 'string' ? a.id.replace(/\D/g, '') : '';
+      const idB = typeof b.id === 'string' ? b.id.replace(/\D/g, '') : '';
+      if (idA && idB && idA !== idB) return Number(idB) - Number(idA);
+      return 0;
+    });
+  };
+
   const data = await apiGet<any[]>('/api/notes');
   if (data && Array.isArray(data) && data.length > 0) {
-    return data;
+    return sortByNewest(data);
   }
   // Fallback: check localStorage, otherwise supply pre-seeded academic notes
   try {
     if (typeof window !== 'undefined') {
       const stored = JSON.parse(window.localStorage.getItem('edurag-notes') || '[]');
       if (Array.isArray(stored) && stored.length > 0) {
-        return stored;
+        return sortByNewest(stored);
       }
     }
   } catch {
     // continue
   }
-  return generatedNotes;
+  return sortByNewest(generatedNotes);
 }
 
 export async function createNote(note: any): Promise<boolean> {
@@ -255,7 +267,7 @@ export async function createNote(note: any): Promise<boolean> {
     const userId = getUserId();
     const noteWithUserId = { ...note, userId, id: note.id || `note_${Date.now()}` };
     notes = notes.filter((n: any) => n.userId !== userId || n.id !== noteWithUserId.id);
-    notes.push(noteWithUserId);
+    notes.unshift(noteWithUserId);
     window.localStorage.setItem('edurag-notes', JSON.stringify(notes));
     return true;
   } catch (err) {

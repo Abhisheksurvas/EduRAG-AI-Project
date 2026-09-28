@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect, useCallback, type MouseEvent } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo, type MouseEvent } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Printer,
   Eye,
@@ -62,7 +63,8 @@ import {
 import { cn } from '@/lib/utils';
 
 import { ChatHistorySidebar } from '@/components/ChatHistorySidebar';
-import { FormulaSheetRenderer, FormulaSectionCardsView, VisualMath, cleanLatexMath, parseFormulaSection } from './FormulaSheetRenderer';
+import { FormulaSheetRenderer, FormulaSectionCardsView, VisualMath, cleanLatexMath, parseFormulaSection, getFormulaSheetFormulas, type FormulaItem } from './FormulaSheetRenderer';
+import { triggerVerifiedExportDownload } from '@/lib/exportNotesService';
 
 import {
   loadConversations,
@@ -2906,9 +2908,37 @@ export function formatNoteDateTime(val?: string): string {
   return `${dateStr} at ${timeStr}`;
 }
 
+export function triggerPdfBlobDownload(doc: any, filename: string) {
+  const safeFilename = filename.endsWith('.pdf') ? filename : `${filename}.pdf`;
+  try {
+    const blob = doc.output('blob');
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = safeFilename;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    setTimeout(() => {
+      if (document.body.contains(link)) {
+        document.body.removeChild(link);
+      }
+      URL.revokeObjectURL(url);
+    }, 1500);
+  } catch (err) {
+    console.warn('Direct blob URL trigger failed, falling back to doc.save:', err);
+    doc.save(safeFilename);
+  }
+}
+
 export async function downloadPdfDirect(note: any) {
-  const { jsPDF } = await import('jspdf');
-  const doc = new jsPDF({
+  if (!note) {
+    throw new Error('No note data available for export.');
+  }
+
+  const jspdfModule = await import('jspdf');
+  const jsPDFClass = (jspdfModule as any).jsPDF || (jspdfModule as any).default?.jsPDF || (jspdfModule as any).default || jspdfModule;
+  const doc = new jsPDFClass({
     orientation: 'portrait',
     unit: 'pt',
     format: 'a4',
@@ -2916,14 +2946,14 @@ export async function downloadPdfDirect(note: any) {
 
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
-  const margin = 44;
+  const margin = 40;
   const maxLineWidth = pageWidth - margin * 2;
-  let y = 48;
+  let y = 40;
 
   const checkPageBreak = (neededHeight: number) => {
-    if (y + neededHeight > pageHeight - margin) {
+    if (y + neededHeight > pageHeight - margin - 24) {
       doc.addPage();
-      y = 48;
+      y = 40;
     }
   };
 
@@ -2945,250 +2975,330 @@ export async function downloadPdfDirect(note: any) {
       note.content.toLowerCase().includes('formula name')
     ));
 
-  const parsedFormulas = isFormulaSheet ? parseFormulaSection(note.content || '') : [];
+  const parsedFormulas: FormulaItem[] = isFormulaSheet
+    ? getFormulaSheetFormulas(note.content || '', note.chapter, note.title)
+    : [];
+
+  const formatFormulaMathForDisplay = (raw: string): string => {
+    if (!raw) return '';
+    let s = cleanLatexMath(raw);
+
+    // Subscripts with braces: _{i} -> ᵢ
+    s = s.replace(/_\{0\}/g, '₀').replace(/_\{1\}/g, '₁').replace(/_\{2\}/g, '₂').replace(/_\{3\}/g, '₃')
+         .replace(/_\{4\}/g, '₄').replace(/_\{5\}/g, '₅').replace(/_\{n\}/g, 'ₙ').replace(/_\{i\}/g, 'ᵢ')
+         .replace(/_\{j\}/g, 'ⱼ').replace(/_\{k\}/g, 'ₖ').replace(/_\{t\}/g, 'ₜ').replace(/_\{m\}/g, 'ₘ');
+
+    // Superscripts with braces: ^{2} -> ²
+    s = s.replace(/\^\{0\}/g, '⁰').replace(/\^\{1\}/g, '¹').replace(/\^\{2\}/g, '²').replace(/\^\{3\}/g, '³')
+         .replace(/\^\{n\}/g, 'ⁿ').replace(/\^\{T\}/g, 'ᵀ').replace(/\^\{-1\}/g, '⁻¹').replace(/\^\{-z\}/g, '⁻ᶻ');
+
+    // Common unbraced subscripts and superscripts:
+    s = s.replace(/_0/g, '₀').replace(/_1/g, '₁').replace(/_2/g, '₂').replace(/_3/g, '₃')
+         .replace(/_4/g, '₄').replace(/_5/g, '₅').replace(/_n/g, 'ₙ').replace(/_i/g, 'ᵢ')
+         .replace(/_j/g, 'ⱼ').replace(/_k/g, 'ₖ').replace(/_t/g, 'ₜ').replace(/_m/g, 'ₘ');
+    s = s.replace(/\^0/g, '⁰').replace(/\^1/g, '¹').replace(/\^2/g, '²').replace(/\^3/g, '³')
+         .replace(/\^n/g, 'ⁿ').replace(/\^T/g, 'ᵀ');
+
+    // In case of y_pred, y_hat, y_mean from plain text:
+    s = s.replace(/\by_pred\b/g, 'ŷ').replace(/\by_hat\b/g, 'ŷ').replace(/\bx_hat\b/g, 'x̂');
+    s = s.replace(/\bx_mean\b/g, 'x̄').replace(/\by_mean\b/g, 'ȳ');
+
+    // Strip any stray markdown / latex symbols
+    s = s.replace(/[$`]/g, '');
+    s = s.replace(/\\/g, '');
+
+    return s.replace(/[ \t]+/g, ' ').trim();
+  };
+
+  const cleanTextForDisplay = (text: string): string => {
+    if (!text) return '';
+    let s = text.trim();
+    s = s.replace(/\*\*([^*]+)\*\*/g, '$1');
+    s = s.replace(/\*([^*]+)\*/g, '$1');
+    s = s.replace(/\`([^`]+)\`/g, '$1');
+    s = s.replace(/\$([^$]+)\$/g, (_, math) => formatFormulaMathForDisplay(math));
+    s = s.replace(/\by_pred\b/g, 'ŷ').replace(/\by_hat\b/g, 'ŷ').replace(/\bx_hat\b/g, 'x̂');
+    s = s.replace(/\bx_mean\b/g, 'x̄').replace(/\by_mean\b/g, 'ȳ');
+    s = s.replace(/_i\b/g, 'ᵢ').replace(/_n\b/g, 'ₙ').replace(/_1\b/g, '₁').replace(/_2\b/g, '₂');
+    s = s.replace(/\^2\b/g, '²').replace(/\^3\b/g, '³').replace(/\^n\b/g, 'ⁿ');
+    s = s.replace(/[$`\\]/g, '');
+    return s.trim();
+  };
 
   // ──────────────────────────────────────────────────────────────────────────
-  // Dedicated Formula Sheet PDF (Student-Friendly, Step-by-Step Explanation)
+  // Dedicated Formula Sheet PDF (Instant, Crisp Vector Rendering)
   // ──────────────────────────────────────────────────────────────────────────
   if (parsedFormulas.length > 0) {
-    // Header Badge
-    doc.setFillColor(238, 242, 255);
-    doc.roundedRect(margin, y, 175, 20, 4, 4, 'F');
+    // 1. Header Banner
+    doc.setFillColor(109, 40, 217); // Purple 700
+    doc.roundedRect(margin, y, maxLineWidth, 64, 8, 8, 'F');
+
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8.5);
-    doc.setTextColor(67, 56, 202);
-    doc.text('FORMULA SHEET & REFERENCE GUIDE', margin + 8, y + 13.5);
-    y += 32;
+    doc.setTextColor(233, 213, 255); // Purple 200
+    doc.text('VERIFIED EDURAG FORMULA SHEET • ' + cleanTextForDisplay(note.chapter || 'REFERENCE GUIDE').toUpperCase(), margin + 14, y + 18);
 
-    // Document Title
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(19);
-    doc.setTextColor(15, 23, 42);
-    const titleLines = doc.splitTextToSize(note.title || 'Formula Sheet', maxLineWidth);
-    doc.text(titleLines, margin, y);
-    y += titleLines.length * 23 + 4;
+    doc.setFontSize(15);
+    doc.setTextColor(255, 255, 255);
+    const titleLines = doc.splitTextToSize(cleanTextForDisplay(note.title || 'Formula Sheet & Reference Guide'), maxLineWidth - 28);
+    doc.text(titleLines[0] || 'Formula Sheet & Reference Guide', margin + 14, y + 36);
 
-    // Metadata
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(9.5);
-    doc.setTextColor(100, 116, 139);
-    if (note.chapter) {
-      doc.text(`Topic / Chapter: ${cleanMathForPdf(note.chapter)}`, margin, y);
-      y += 14;
-    }
-    if (note.course) {
-      doc.text(`Document / Course: ${cleanMathForPdf(note.course)}`, margin, y);
-      y += 14;
-    }
-    doc.text(`Generated by EduRAG AI Study System • ${dateStr} at ${timeStr} • ${parsedFormulas.length} Verified Formulas`, margin, y);
-    y += 16;
+    doc.setFontSize(8.5);
+    doc.setTextColor(216, 180, 254);
+    doc.text(`Generated by EduRAG AI • ${parsedFormulas.length} Structured Formulas • ${dateStr} at ${timeStr}`, margin + 14, y + 52);
 
-    // Divider Line
-    doc.setDrawColor(203, 213, 225);
-    doc.setLineWidth(1);
-    doc.line(margin, y, pageWidth - margin, y);
-    y += 20;
+    y += 78;
 
-    // Render each formula card with student-friendly explanations
-    parsedFormulas.forEach((item, idx) => {
-      checkPageBreak(130);
+    // 2. Render each Formula Card
+    for (let idx = 0; idx < parsedFormulas.length; idx++) {
+      const item = parsedFormulas[idx];
+      const rawFormula = item.studentFormula || cleanLatexMath(item.math) || item.name;
+      const cleanFormula = formatFormulaMathForDisplay(rawFormula);
+      const meaningText = item.meaning ? cleanTextForDisplay(item.meaning) : '';
+      const meaningLines = meaningText ? doc.splitTextToSize(`Meaning: ${meaningText}`, maxLineWidth - 32) : [];
+      const formulaLines = doc.splitTextToSize(cleanFormula, maxLineWidth - 32);
 
-      // 1. Formula Header Bar (Unit, Chapter, Page & Formula Name)
-      doc.setFillColor(241, 245, 249);
-      doc.roundedRect(margin, y, maxLineWidth, 22, 4, 4, 'F');
-      doc.setDrawColor(203, 213, 225);
-      doc.setLineWidth(0.75);
-      doc.roundedRect(margin, y, maxLineWidth, 22, 4, 4, 'D');
+      // Estimate card height
+      let neededH = 50 + (formulaLines.length * 14);
+      if (meaningLines.length > 0) neededH += (meaningLines.length * 12) + 16;
+      if (item.symbols && item.symbols.length > 0) neededH += Math.min(item.symbols.length * 14 + 16, 70);
+      if (item.workedExample) neededH += 44;
+      if (item.finalAnswer) neededH += 24;
+      if (item.mnemonic) neededH += 24;
 
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(10);
-      doc.setTextColor(30, 41, 59);
-      doc.text(`Formula #${idx + 1}: ${cleanMathForPdf(item.name)}`, margin + 8, y + 14.5);
+      checkPageBreak(Math.min(neededH + 16, 260));
 
-      // Exact Unit, Chapter, and Page badge on right side
-      const sourceBadge = `${cleanMathForPdf(item.unit)}  |  ${cleanMathForPdf(item.chapter)}  |  Page ${cleanMathForPdf(item.page)}`;
+      const cardStartY = y;
+
+      // Card Header Badges
+      doc.setFillColor(248, 250, 252);
+      doc.roundedRect(margin, y, maxLineWidth, 22, 6, 6, 'F');
+
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8);
-      doc.setTextColor(79, 70, 229);
-      const badgeWidth = doc.getTextWidth(sourceBadge);
-      doc.text(sourceBadge, pageWidth - margin - badgeWidth - 8, y + 14.5);
+      doc.setTextColor(109, 40, 217);
+      const badgesText = `[Unit: ${cleanTextForDisplay(item.unit || 'Core')}]   [Chapter: ${cleanTextForDisplay(item.chapter || note.chapter || 'General')}]   [Page: ${cleanTextForDisplay(item.page || '1')}]`;
+      doc.text(badgesText, margin + 8, y + 14);
 
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.setTextColor(100, 116, 139);
+      const numText = `Formula #${idx + 1}`;
+      doc.text(numText, pageWidth - margin - doc.getTextWidth(numText) - 8, y + 14);
       y += 28;
 
-      // 2. Clear Formula Display Box (Monospace, clear notation, no raw LaTeX)
-      const cleanFormula = cleanMathForPdf(item.studentFormula || item.math || item.name);
-      const formulaLines = doc.splitTextToSize(cleanFormula, maxLineWidth - 20);
-      const formulaBoxHeight = Math.max(30, 16 + formulaLines.length * 14);
+      // Formula Name
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(12);
+      doc.setTextColor(15, 23, 42);
+      doc.text(cleanTextForDisplay(item.name || 'Formula'), margin + 8, y);
+      y += 16;
 
-      checkPageBreak(formulaBoxHeight + 10);
-      doc.setFillColor(238, 242, 255);
-      doc.roundedRect(margin, y, maxLineWidth, formulaBoxHeight, 4, 4, 'F');
+      // Formula Math Box
+      const fBoxHeight = Math.max(26, formulaLines.length * 14 + 12);
+      doc.setFillColor(245, 243, 255);
       doc.setDrawColor(199, 210, 254);
-      doc.setLineWidth(0.75);
-      doc.roundedRect(margin, y, maxLineWidth, formulaBoxHeight, 4, 4, 'D');
+      doc.roundedRect(margin + 4, y, maxLineWidth - 8, fBoxHeight, 5, 5, 'FD');
 
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8);
-      doc.setTextColor(67, 56, 202);
-      doc.text('MATHEMATICAL FORMULA:', margin + 10, y + 12);
+      doc.setFontSize(7.5);
+      doc.setTextColor(109, 40, 217);
+      doc.text('FORMULA', margin + 12, y + 10);
 
-      doc.setFont('courier', 'bold');
-      doc.setFontSize(10.5);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
       doc.setTextColor(15, 23, 42);
-      doc.text(formulaLines, margin + 10, y + 25);
+      doc.text(formulaLines, margin + 12, y + 22);
+      y += fBoxHeight + 8;
 
-      y += formulaBoxHeight + 10;
-
-      // 3. Formula Meaning / Definition
-      if (item.meaning) {
-        const cleanMeaning = cleanMathForPdf(item.meaning);
-        const meaningLines = doc.splitTextToSize(cleanMeaning, maxLineWidth - 10);
-        checkPageBreak(meaningLines.length * 13 + 18);
-
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(9);
-        doc.setTextColor(30, 41, 59);
-        doc.text('Formula Meaning / Definition:', margin, y);
-        y += 13;
+      // Formula Meaning Box
+      if (meaningLines.length > 0) {
+        const mBoxHeight = Math.max(22, meaningLines.length * 12 + 10);
+        doc.setFillColor(254, 252, 232);
+        doc.setDrawColor(254, 240, 138);
+        doc.roundedRect(margin + 4, y, maxLineWidth - 8, mBoxHeight, 4, 4, 'FD');
 
         doc.setFont('helvetica', 'normal');
-        doc.setFontSize(9);
-        doc.setTextColor(51, 65, 85);
-        doc.text(meaningLines, margin + 6, y);
-        y += meaningLines.length * 13 + 8;
+        doc.setFontSize(8.5);
+        doc.setTextColor(113, 63, 18);
+        doc.text(meaningLines, margin + 12, y + 13);
+        y += mBoxHeight + 6;
       }
 
-      // 4. Variables Explained (Meaning of every symbol)
+      // Variables Explained
       if (item.symbols && item.symbols.length > 0) {
-        checkPageBreak(30);
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(9);
-        doc.setTextColor(30, 41, 59);
-        doc.text('Variables Explained (What each symbol means):', margin, y);
-        y += 13;
+        doc.setFontSize(7.5);
+        doc.setTextColor(71, 85, 105);
+        doc.text('VARIABLES EXPLAINED:', margin + 8, y + 6);
+        y += 14;
 
-        item.symbols.forEach(sym => {
-          const symStr = `• ${cleanMathForPdf(sym.symbol)}: ${cleanMathForPdf(sym.meaning)}`;
-          const symLines = doc.splitTextToSize(symStr, maxLineWidth - 12);
-          checkPageBreak(symLines.length * 12 + 4);
+        item.symbols.slice(0, 6).forEach((s: any) => {
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(8);
+          doc.setTextColor(109, 40, 217);
+          const sym = `${formatFormulaMathForDisplay(s.symbol || '')}:`;
+          doc.text(sym, margin + 12, y);
+          const symW = doc.getTextWidth(sym) + 4;
 
           doc.setFont('helvetica', 'normal');
-          doc.setFontSize(8.5);
           doc.setTextColor(51, 65, 85);
-          doc.text(symLines, margin + 8, y);
-          y += symLines.length * 12 + 3;
+          const desc = doc.splitTextToSize(cleanTextForDisplay(s.meaning || ''), maxLineWidth - 32 - symW);
+          doc.text(desc, margin + 12 + symW, y);
+          y += Math.max(12, desc.length * 10);
         });
-        y += 6;
+        y += 4;
       }
 
-      // 5. Step-by-Step Calculation
-      if (item.explanation) {
-        const cleanExpl = cleanMathForPdf(item.explanation);
-        const explLines = doc.splitTextToSize(cleanExpl, maxLineWidth - 10);
-        checkPageBreak(explLines.length * 13 + 18);
-
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(9);
-        doc.setTextColor(30, 41, 59);
-        doc.text('Step-by-Step Calculation Method:', margin, y);
-        y += 13;
-
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(9);
-        doc.setTextColor(51, 65, 85);
-        doc.text(explLines, margin + 6, y);
-        y += explLines.length * 13 + 8;
-      }
-
-      // 6. Simple Numerical Example
+      // Worked Example
       if (item.workedExample) {
-        const cleanEx = cleanMathForPdf(item.workedExample);
-        const exLines = doc.splitTextToSize(cleanEx, maxLineWidth - 10);
-        checkPageBreak(exLines.length * 13 + 18);
+        const exLines = item.workedExample.split('\n').filter(Boolean);
+        const exHeight = Math.max(22, exLines.slice(0, 3).length * 12 + 16);
+        doc.setFillColor(240, 253, 244);
+        doc.setDrawColor(187, 247, 208);
+        doc.roundedRect(margin + 4, y, maxLineWidth - 8, exHeight, 4, 4, 'FD');
 
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(9);
-        doc.setTextColor(30, 41, 59);
-        doc.text('Simple Numerical Example:', margin, y);
-        y += 13;
+        doc.setFontSize(7.5);
+        doc.setTextColor(22, 101, 52);
+        doc.text('WORKED EXAMPLE:', margin + 12, y + 11);
 
         doc.setFont('helvetica', 'normal');
-        doc.setFontSize(9);
-        doc.setTextColor(51, 65, 85);
-        doc.text(exLines, margin + 6, y);
-        y += exLines.length * 13 + 8;
+        doc.setFontSize(8);
+        doc.setTextColor(30, 41, 59);
+        let stepY = y + 22;
+        exLines.slice(0, 3).forEach((line: string, lIdx: number) => {
+          const cleanL = cleanTextForDisplay(line.replace(/^[-*•\d.]+\s*/, ''));
+          const stepText = doc.splitTextToSize(`${lIdx + 1}. ${cleanL}`, maxLineWidth - 32);
+          doc.text(stepText[0] || '', margin + 12, stepY);
+          stepY += 11;
+        });
+        y += exHeight + 6;
       }
 
-      // 7. Final Answer (Highlighted Result)
+      // Final Answer
       if (item.finalAnswer) {
-        const cleanAns = cleanMathForPdf(item.finalAnswer);
-        const ansLines = doc.splitTextToSize(`Final Answer: ${cleanAns}`, maxLineWidth - 16);
-        const ansBoxHeight = Math.max(22, 14 + ansLines.length * 12);
-
-        checkPageBreak(ansBoxHeight + 8);
         doc.setFillColor(236, 253, 245);
-        doc.roundedRect(margin, y, maxLineWidth, ansBoxHeight, 4, 4, 'F');
         doc.setDrawColor(167, 243, 208);
-        doc.setLineWidth(0.75);
-        doc.roundedRect(margin, y, maxLineWidth, ansBoxHeight, 4, 4, 'D');
+        doc.roundedRect(margin + 4, y, maxLineWidth - 8, 20, 4, 4, 'FD');
 
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(9);
+        doc.setFontSize(8);
         doc.setTextColor(6, 95, 70);
-        doc.text(ansLines, margin + 8, y + 13.5);
-
-        y += ansBoxHeight + 8;
+        doc.text('Final Answer: ' + cleanTextForDisplay(item.finalAnswer), margin + 12, y + 13);
+        y += 26;
       }
 
-      // 8. Quick Memory Tip (Mnemonic)
+      // Quick Memory Tip
       if (item.mnemonic) {
-        const cleanTip = cleanMathForPdf(item.mnemonic);
-        const tipLines = doc.splitTextToSize(`Quick Memory Tip: ${cleanTip}`, maxLineWidth - 16);
-        const tipBoxHeight = Math.max(22, 14 + tipLines.length * 12);
-
-        checkPageBreak(tipBoxHeight + 8);
-        doc.setFillColor(255, 251, 235);
-        doc.roundedRect(margin, y, maxLineWidth, tipBoxHeight, 4, 4, 'F');
+        doc.setFillColor(254, 243, 199);
         doc.setDrawColor(253, 230, 138);
-        doc.setLineWidth(0.75);
-        doc.roundedRect(margin, y, maxLineWidth, tipBoxHeight, 4, 4, 'D');
+        doc.roundedRect(margin + 4, y, maxLineWidth - 8, 20, 4, 4, 'FD');
 
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(8.5);
+        doc.setFontSize(8);
         doc.setTextColor(146, 64, 14);
-        doc.text(tipLines, margin + 8, y + 13.5);
-
-        y += tipBoxHeight + 10;
+        doc.text('Quick Memory Tip: ' + cleanTextForDisplay(item.mnemonic), margin + 12, y + 13);
+        y += 26;
       }
 
-      // Bottom separator rule between formulas
-      checkPageBreak(24);
+      // Outer Card Border
+      const cardHeight = y - cardStartY + 4;
       doc.setDrawColor(226, 232, 240);
-      doc.setLineWidth(0.75);
-      doc.line(margin, y, pageWidth - margin, y);
-      y += 18;
-    });
+      doc.roundedRect(margin, cardStartY, maxLineWidth, cardHeight, 6, 6, 'S');
+      y += 14;
+    }
 
-    // Add page numbers on all pages
+    // 3. Complexity Table (if available)
+    const secBlocks = (note.content || '').split(/\n(?=##\s+)/g);
+    for (const sec of secBlocks.slice(1)) {
+      const firstLineEnd = sec.indexOf('\n');
+      const headerLine = (firstLineEnd !== -1 ? sec.slice(0, firstLineEnd) : sec).toLowerCase();
+      if (headerLine.includes('complexity') || headerLine.includes('computational bound') || headerLine.includes('metric')) {
+        const secText = firstLineEnd !== -1 ? sec.slice(firstLineEnd + 1) : '';
+        const lines = secText.split('\n').filter((l: string) => l.trim().length > 0);
+        const tableLines = lines.filter((l: string) => l.trim().startsWith('|') && l.trim().endsWith('|'));
+        if (tableLines.length >= 2) {
+          checkPageBreak(120);
+          const headerCols = tableLines[0].split('|').map((c: string) => c.trim()).filter(Boolean);
+          const rowLines = tableLines.slice(2);
+
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(11);
+          doc.setTextColor(15, 23, 42);
+          doc.text('Computational Complexity & Bounds', margin, y);
+          y += 14;
+
+          // Header
+          doc.setFillColor(241, 245, 249);
+          doc.rect(margin, y, maxLineWidth, 18, 'F');
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(8);
+          doc.setTextColor(30, 41, 59);
+          const colW = maxLineWidth / Math.max(headerCols.length, 1);
+          headerCols.forEach((col: string, cIdx: number) => {
+            doc.text(cleanTextForDisplay(col), margin + (cIdx * colW) + 6, y + 12);
+          });
+          y += 18;
+
+          // Rows
+          rowLines.forEach((r: string, rIdx: number) => {
+            const cols = r.split('|').map((c: string) => c.trim()).filter(Boolean);
+            if (cols.length === 0) return;
+            checkPageBreak(16);
+            if (rIdx % 2 === 1) {
+              doc.setFillColor(248, 250, 252);
+              doc.rect(margin, y, maxLineWidth, 16, 'F');
+            }
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(8);
+            doc.setTextColor(51, 65, 85);
+            cols.forEach((col: string, cIdx: number) => {
+              doc.text(cleanTextForDisplay(col), margin + (cIdx * colW) + 6, y + 11);
+            });
+            y += 16;
+          });
+          y += 14;
+          break;
+        }
+      }
+    }
+
+    // 4. Running headers & footers
     const totalPages = doc.getNumberOfPages();
     for (let i = 1; i <= totalPages; i++) {
       doc.setPage(i);
+      if (i > 1) {
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(8);
+        doc.setTextColor(100, 116, 139);
+        doc.text('EduRAG AI Study System • Formula Reference Guide', margin, 24);
+        doc.setDrawColor(226, 232, 240);
+        doc.setLineWidth(0.5);
+        doc.line(margin, 28, pageWidth - margin, 28);
+      }
+
+      doc.setDrawColor(226, 232, 240);
+      doc.setLineWidth(0.5);
+      doc.line(margin, pageHeight - 26, pageWidth - margin, pageHeight - 26);
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(8);
       doc.setTextColor(148, 163, 184);
-      doc.text('EduRAG AI Study System • Formula Reference Guide', margin, pageHeight - 24);
+      doc.text('EduRAG AI Study System • Formula Reference Guide', margin, pageHeight - 14);
       const pageStr = `Page ${i} of ${totalPages}`;
       const pw = doc.getTextWidth(pageStr);
-      doc.text(pageStr, pageWidth - margin - pw, pageHeight - 24);
+      doc.text(pageStr, pageWidth - margin - pw, pageHeight - 14);
     }
 
     const safeTitle = (note.title || 'formula_sheet').replace(/[^a-z0-9_-]+/gi, '_').toLowerCase();
-    doc.save(`${safeTitle}.pdf`);
+    triggerPdfBlobDownload(doc, `${safeTitle}.pdf`);
     return;
   }
 
   // ──────────────────────────────────────────────────────────────────────────
-  // Clean Standard Study Notes PDF (Non-Formula notes fallback)
+  // Clean Standard Study Notes PDF (Non-Formula notes)
   // ──────────────────────────────────────────────────────────────────────────
   // Header Badge
   doc.setFillColor(238, 242, 255);
@@ -3201,15 +3311,15 @@ export async function downloadPdfDirect(note: any) {
 
   // Title
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(20);
+  doc.setFontSize(18);
   doc.setTextColor(15, 23, 42);
   const titleLines = doc.splitTextToSize(note.title || 'Generated Notes', maxLineWidth);
   doc.text(titleLines, margin, y);
-  y += titleLines.length * 24 + 4;
+  y += titleLines.length * 22 + 4;
 
   // Metadata
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9.5);
+  doc.setFontSize(9);
   doc.setTextColor(100, 116, 139);
   if (note.chapter) {
     doc.text(`Topic / Chapter: ${cleanMathForPdf(note.chapter)}`, margin, y);
@@ -3241,52 +3351,52 @@ export async function downloadPdfDirect(note: any) {
       checkPageBreak(36);
       y += 6;
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(16);
+      doc.setFontSize(15);
       doc.setTextColor(30, 58, 138);
       const heading = cleanMathForPdf(trimmed.replace(/^#\s*/, ''));
       const split = doc.splitTextToSize(heading, maxLineWidth);
       doc.text(split, margin, y);
-      y += split.length * 20 + 8;
+      y += split.length * 19 + 6;
     } else if (trimmed.startsWith('## ')) {
       checkPageBreak(30);
       y += 5;
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(13);
+      doc.setFontSize(12.5);
       doc.setTextColor(29, 78, 216);
       const heading = cleanMathForPdf(trimmed.replace(/^##\s*/, ''));
       const split = doc.splitTextToSize(heading, maxLineWidth);
       doc.text(split, margin, y);
-      y += split.length * 17 + 6;
+      y += split.length * 16 + 5;
     } else if (trimmed.startsWith('### ')) {
       checkPageBreak(24);
       y += 4;
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(11);
+      doc.setFontSize(10.5);
       doc.setTextColor(30, 41, 59);
       const heading = cleanMathForPdf(trimmed.replace(/^###\s*/, ''));
       const split = doc.splitTextToSize(heading, maxLineWidth);
       doc.text(split, margin, y);
-      y += split.length * 15 + 4;
+      y += split.length * 14 + 4;
     } else if (trimmed.startsWith('- ') || trimmed.startsWith('* ') || trimmed.startsWith('• ')) {
       checkPageBreak(18);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(10);
+      doc.setFontSize(9.5);
       doc.setTextColor(30, 41, 59);
       const bulletText = cleanMathForPdf(trimmed.replace(/^[-*•]\s*/, ''));
       doc.setFillColor(59, 130, 246);
       doc.circle(margin + 4, y - 3, 2, 'F');
       const split = doc.splitTextToSize(bulletText, maxLineWidth - 14);
       doc.text(split, margin + 14, y);
-      y += split.length * 14 + 4;
+      y += split.length * 13 + 4;
     } else {
       checkPageBreak(16);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(10);
+      doc.setFontSize(9.5);
       doc.setTextColor(51, 65, 85);
       const cleanText = cleanMathForPdf(trimmed);
       const split = doc.splitTextToSize(cleanText, maxLineWidth);
       doc.text(split, margin, y);
-      y += split.length * 14 + 4;
+      y += split.length * 13 + 4;
     }
   }
 
@@ -3297,14 +3407,14 @@ export async function downloadPdfDirect(note: any) {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
     doc.setTextColor(148, 163, 184);
-    doc.text('EduRAG AI Study System • Study Notes', margin, pageHeight - 24);
+    doc.text('EduRAG AI Study System • Study Notes', margin, pageHeight - 20);
     const pageStr = `Page ${i} of ${totalPages}`;
     const pw = doc.getTextWidth(pageStr);
-    doc.text(pageStr, pageWidth - margin - pw, pageHeight - 24);
+    doc.text(pageStr, pageWidth - margin - pw, pageHeight - 20);
   }
 
   const safeTitle = (note.title || 'notes').replace(/[^a-z0-9_-]+/gi, '_').toLowerCase();
-  doc.save(`${safeTitle}.pdf`);
+  triggerPdfBlobDownload(doc, `${safeTitle}.pdf`);
 }
 
 export function StudentNotes() {
@@ -3328,17 +3438,48 @@ export function StudentNotes() {
   const [notesError, setNotesError] = useState<string | null>(null);
   const [copiedNote, setCopiedNote] = useState<boolean>(false);
   const [showExportModal, setShowExportModal] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportingFormat, setExportingFormat] = useState<string | null>(null);
+
+  const handleExportNote = async (format: 'pdf' | 'docx' | 'pptx' | 'txt') => {
+    if (!activeNote || isExporting) return;
+    setIsExporting(true);
+    setExportingFormat(format);
+    try {
+      await triggerVerifiedExportDownload(activeNote, format);
+      setShowExportModal(false);
+      const labels: Record<string, string> = {
+        pdf: 'PDF Document (.pdf)',
+        docx: 'Word Document (.docx)',
+        pptx: 'PowerPoint Presentation (.pptx)',
+        txt: 'Plain Text (.txt)',
+      };
+      pushToast(`Downloaded as ${labels[format] || format}`, 'success');
+    } catch (err: any) {
+      console.error(`${format.toUpperCase()} export error:`, err);
+      pushToast(err.message || `Failed to export ${format.toUpperCase()}. Please try again.`, 'error');
+    } finally {
+      setIsExporting(false);
+      setExportingFormat(null);
+    }
+  };
 
   useEffect(() => {
     if (showExportModal) {
       const originalOverflow = document.body.style.overflow;
       document.body.style.overflow = 'hidden';
+      const onKey = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') setShowExportModal(false);
+      };
+      document.addEventListener('keydown', onKey);
       return () => {
         document.body.style.overflow = originalOverflow;
+        document.removeEventListener('keydown', onKey);
       };
     }
   }, [showExportModal]);
   const [showDeleteNoteConfirm, setShowDeleteNoteConfirm] = useState(false);
+  const [noteToDelete, setNoteToDelete] = useState<any | null>(null);
   const [isDeletingNote, setIsDeletingNote] = useState(false);
   const [noteTopic, setNoteTopic] = useState('');
   const [uploadedNoteFiles, setUploadedNoteFiles] = useState<{ id: string; name: string; status: 'processing' | 'ready' | 'failed' }[]>([]);
@@ -3353,14 +3494,7 @@ export function StudentNotes() {
   const [selectedPrompt, setSelectedPrompt] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
 
-  const promptOptions = [
-    'Summarize this into five key takeaways',
-    'Create a concise meeting minutes draft from this',
-    'Make 10 flashcards from this material',
-    'Build a timeline and milestones from this',
-    'Explain this in simple terms for a beginner',
-    'Compare the main options presented here',
-  ];
+
 
   const handleDeleteAllNotes = async () => {
     setIsDeletingAll(true);
@@ -3424,11 +3558,18 @@ export function StudentNotes() {
     fetchNotes()
       .then(data => {
         if (!cancelled) {
-          setNotes(data);
-          if (data.length > 0) {
-            setActiveNote(data[0]);
-            setGenerated(true);
-          }
+          const sorted = [...(data || [])].sort((a, b) => {
+            const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            if (timeA !== timeB) return timeB - timeA;
+            const idA = typeof a.id === 'string' ? a.id.replace(/\D/g, '') : '';
+            const idB = typeof b.id === 'string' ? b.id.replace(/\D/g, '') : '';
+            if (idA && idB && idA !== idB) return Number(idB) - Number(idA);
+            return 0;
+          });
+          setNotes(sorted);
+          // By default, the generated notes page (right side) is blank.
+          // Note is displayed only when student generates a new note or clicks 'View' on a saved note.
         }
       })
       .catch(error => {
@@ -3439,6 +3580,18 @@ export function StudentNotes() {
       });
     return () => { cancelled = true; };
   }, []);
+
+  const sortedRecentNotes = useMemo<any[]>(() => {
+    return [...notes].sort((a: any, b: any) => {
+      const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      if (timeA !== timeB) return timeB - timeA; // Newest on top, older previously generated at bottom
+      const idA = typeof a.id === 'string' ? a.id.replace(/\D/g, '') : '';
+      const idB = typeof b.id === 'string' ? b.id.replace(/\D/g, '') : '';
+      if (idA && idB && idA !== idB) return Number(idB) - Number(idA);
+      return 0;
+    });
+  }, [notes]);
 
   const [type, setType] =
     useState<
@@ -3749,7 +3902,7 @@ export function StudentNotes() {
         console.warn('Note save warning:', saveErr);
       }
 
-      setNotes(current => [note, ...current]);
+      setNotes(current => [note, ...current.filter(n => n.id !== note.id)]);
       setActiveNote(note);
       setGenerated(true);
       pushToast(`"${finalTitle}" generated successfully!`, 'success');
@@ -3776,12 +3929,9 @@ export function StudentNotes() {
         <div className="lg:col-span-5 space-y-6">
           <div className="rounded-3xl border border-neutral-200/90 bg-white shadow-sm overflow-hidden p-6 md:p-7 space-y-6">
             
-            {/* 1. Add a file */}
+            {/* Add a file */}
             <div className="space-y-4">
               <div className="flex items-start gap-3">
-                <span className="grid place-items-center h-6 w-6 rounded-full bg-emerald-500 text-white text-xs font-bold shrink-0 mt-0.5 shadow-2xs">
-                  1
-                </span>
                 <div>
                   <h2 className="text-base font-bold font-display text-neutral-900 leading-tight">
                     Add a file
@@ -4079,102 +4229,11 @@ export function StudentNotes() {
               )}
             </div>
 
-            {/* Divider between Add a file and Pick a prompt */}
-            <div className="h-px bg-neutral-200/80 -mx-6 md:-mx-7" />
-
-            {/* 2. Pick a prompt (below Add a file) */}
-            <div className="space-y-4">
-              {/* Step 2 Header */}
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-start gap-3">
-                  <span className="grid place-items-center h-6 w-6 rounded-full bg-neutral-400 text-white text-xs font-bold shrink-0 mt-0.5 shadow-2xs">
-                    2
-                  </span>
-                  <div>
-                    <h2 className="text-base font-bold font-display text-neutral-900 leading-tight">
-                      Pick a prompt
-                    </h2>
-                    <p className="text-xs text-neutral-500 mt-0.5">
-                      Add a file first — then any prompt runs against it.
-                    </p>
-                  </div>
-                </div>
-
-                {/* AI powered (Demo) Badge */}
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/80 shadow-2xs shrink-0">
-                  <Sparkles className="h-3 w-3 text-emerald-600" />
-                  AI powered (Demo)
-                </span>
-              </div>
-
-              {/* Pick a Prompt Section (6 Clickable Prompt Options) */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-neutral-700">
-                    Pick a Prompt
-                  </label>
-                  {selectedPrompt && (
-                    <button
-                      type="button"
-                      onClick={() => setSelectedPrompt(null)}
-                      className="text-[11px] text-neutral-400 hover:text-neutral-600 underline cursor-pointer"
-                    >
-                      Clear selection
-                    </button>
-                  )}
-                </div>
-
-                <div className="space-y-2">
-                  {promptOptions.map((promptText) => {
-                    const isPromptSelected = selectedPrompt === promptText;
-                    return (
-                      <button
-                        key={promptText}
-                        type="button"
-                        onClick={() => {
-                          setSelectedPrompt(prev => prev === promptText ? null : promptText);
-                        }}
-                        className={`w-full flex items-center justify-between p-3 rounded-xl border text-xs sm:text-sm text-left transition-all cursor-pointer group ${
-                          isPromptSelected
-                            ? 'border-emerald-500 bg-emerald-50/80 text-emerald-950 font-medium ring-1 ring-emerald-500 shadow-xs'
-                            : 'border-neutral-200/90 bg-white text-neutral-700 hover:border-neutral-300 hover:bg-neutral-50/80 hover:text-neutral-900'
-                        }`}
-                      >
-                        <span className="flex-1 pr-3 leading-snug">
-                          {promptText}
-                        </span>
-                        {/* Small SVG arrow icon on the right */}
-                        <span className={`shrink-0 transition-transform ${
-                          isPromptSelected
-                            ? 'text-emerald-600'
-                            : 'text-neutral-400 group-hover:text-emerald-600 group-hover:translate-x-0.5'
-                        }`}>
-                          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M5 5v6a4 4 0 0 0 4 4h10" />
-                            <path d="m15 11 4 4-4 4" />
-                          </svg>
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Selected prompt banner indicator */}
-              {selectedPrompt && (
-                <div className="flex items-center gap-1.5 text-xs text-emerald-900 bg-emerald-50/90 p-2.5 rounded-xl border border-emerald-200">
-                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
-                  <span className="truncate">
-                    Selected Prompt: <strong>"{selectedPrompt}"</strong>
-                  </span>
-                </div>
-              )}
-
               {/* Generate Notes Button */}
-              <div className="space-y-2 pt-1">
+              <div className="space-y-2 pt-2">
                 <Button
                   icon={isGeneratingNote ? LoaderCircle : Sparkles}
-                  className="w-full h-11 text-sm font-semibold rounded-xl bg-primary-600 hover:bg-primary-700 text-white shadow-sm disabled:opacity-60"
+                  className="w-full h-11 text-sm font-semibold rounded-xl bg-primary-600 hover:bg-primary-700 text-white shadow-sm disabled:opacity-60 cursor-pointer"
                   disabled={
                     isGeneratingNote ||
                     !noteTopic.trim()
@@ -4183,15 +4242,11 @@ export function StudentNotes() {
                 >
                   {isGeneratingNote
                     ? (type === 'formulas' ? `Generating Formula Sheet… (${noteGenElapsed}s)` : `Generating Smart Notes… (${noteGenElapsed}s)`)
-                    : selectedPrompt
-                    ? 'Generate Notes with Prompt'
                     : (type === 'formulas' ? 'Generate Formula Sheet' : 'Generate Smart Notes')}
                 </Button>
 
                 {notesError && <p className="text-xs text-error-600">{notesError}</p>}
               </div>
-
-            </div>
 
           </div>
         </div>
@@ -4451,11 +4506,31 @@ export function StudentNotes() {
                       variant="ghost"
                       size="sm"
                       icon={Trash2}
-                      onClick={() => setShowDeleteNoteConfirm(true)}
+                      onClick={() => {
+                        setNoteToDelete(activeNote);
+                        setShowDeleteNoteConfirm(true);
+                      }}
                       title="Delete note"
-                      className="text-error-600 hover:text-error-700 hover:bg-error-50"
+                      className="text-error-600 hover:text-error-700 hover:bg-error-50 cursor-pointer"
                     >
                       Delete
+                    </Button>
+                  )}
+
+                  {/* Close Button: Returns right side to blank state */}
+                  {activeNote && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={X}
+                      onClick={() => {
+                        setActiveNote(null);
+                        setGenerated(false);
+                      }}
+                      title="Close note view"
+                      className="text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100 cursor-pointer"
+                    >
+                      Close
                     </Button>
                   )}
                 </div>
@@ -4477,15 +4552,15 @@ export function StudentNotes() {
               <div className={`h-16 w-16 rounded-2xl flex items-center justify-center mb-4 ${
                 type === 'formulas' ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'
               }`}>
-                {type === 'formulas' ? <Zap className="h-8 w-8" /> : <FileText className="h-8 w-8" />}
+                {type === 'formulas' ? <Zap className="h-8 w-8" /> : <StickyNote className="h-8 w-8" />}
               </div>
               <h3 className="text-lg font-bold font-display text-neutral-900 mb-1">
-                {type === 'formulas' ? 'Formula Sheet Generator' : 'Chapter Summary & Smart Notes'}
+                {type === 'formulas' ? 'Formula Sheet Generator' : 'Generated Notes'}
               </h3>
               <p className="text-sm text-neutral-500 max-w-sm mb-6 leading-relaxed">
                 {type === 'formulas'
                   ? 'Add your course document on the left to extract and generate clean structured formula cards with step-by-step worked examples.'
-                  : "Add a file and pick a prompt on the left to generate your complete chapter summary notes."}
+                  : "Add a file or topic on the left to generate your complete chapter summary notes, or select a note from Recently Generated Notes below."}
               </p>
               <Button
                 icon={type === 'formulas' ? Zap : Sparkles}
@@ -4531,7 +4606,7 @@ export function StudentNotes() {
 
           <CardBody>
             <div className="space-y-2">
-              {notes.map(note => (
+              {sortedRecentNotes.map((note: any) => (
                 <div
                   key={note.id}
                   className="flex items-center gap-3 p-3 rounded-xl border border-neutral-200 hover:bg-neutral-50 transition-colors"
@@ -4561,20 +4636,10 @@ export function StudentNotes() {
                     <button
                       type="button"
                       title="Delete note"
-                      onClick={async (e) => {
+                      onClick={(e) => {
                         e.stopPropagation();
-                        try {
-                          await deleteNote(note.id);
-                        } catch (err) {
-                          console.warn('Note delete error:', err);
-                        }
-                        const remaining = notes.filter(item => item.id !== note.id);
-                        setNotes(remaining);
-                        if (activeNote?.id === note.id) {
-                          setActiveNote(remaining[0] || null);
-                          setGenerated(remaining.length > 0);
-                        }
-                        pushToast(`Deleted "${note.title}".`, 'success');
+                        setNoteToDelete(note);
+                        setShowDeleteNoteConfirm(true);
                       }}
                       className="p-1.5 rounded-lg text-neutral-400 hover:text-error-600 hover:bg-error-50 transition-colors cursor-pointer"
                     >
@@ -4601,15 +4666,23 @@ export function StudentNotes() {
       )}
 
       {/* Export Format Selection Modal */}
-      {showExportModal && activeNote && (
+      {showExportModal && activeNote && typeof document !== 'undefined' && createPortal(
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-sm overflow-hidden"
+          className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
+          style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999 }}
           role="dialog"
           aria-modal="true"
-          onClick={() => setShowExportModal(false)}
         >
+          {/* Backdrop: Dims background */}
           <div
-            className="relative bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-[460px] border border-neutral-200/90 flex flex-col max-h-[min(90vh,590px)] overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+            className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs transition-opacity"
+            style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 }}
+            onClick={() => setShowExportModal(false)}
+          />
+
+          {/* Modal Container: Compact, perfectly centered horizontally + vertically */}
+          <div
+            className="relative bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-[440px] border border-neutral-200/90 flex flex-col max-h-[min(88vh,560px)] overflow-hidden animate-in fade-in zoom-in-95 duration-150 my-auto"
             onClick={e => e.stopPropagation()}
           >
             {/* Header - Fixed at Top */}
@@ -4653,23 +4726,23 @@ export function StudentNotes() {
                 {/* PDF */}
                 <button
                   type="button"
-                  onClick={() => {
-                    setShowExportModal(false);
-                    downloadPdfDirect(activeNote);
-                    pushToast('Downloaded as PDF (.pdf)', 'success');
-                  }}
-                  className="w-full flex items-center gap-3 p-2.5 sm:p-3 rounded-xl border border-neutral-200 bg-white hover:border-rose-400 hover:bg-rose-50/40 hover:shadow-xs transition-all text-left cursor-pointer group"
+                  disabled={isExporting}
+                  onClick={() => handleExportNote('pdf')}
+                  className="w-full flex items-center gap-3 p-2.5 sm:p-3 rounded-xl border border-neutral-200 bg-white hover:border-rose-400 hover:bg-rose-50/40 hover:shadow-xs transition-all text-left cursor-pointer group disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <div className="h-9 w-9 rounded-lg bg-rose-100 text-rose-700 flex items-center justify-center font-bold text-xs shrink-0 group-hover:scale-105 transition-transform">
-                    PDF
+                    {isExporting && exportingFormat === 'pdf' ? '...' : 'PDF'}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="text-xs sm:text-sm font-semibold text-neutral-900 group-hover:text-rose-900 flex items-center gap-1.5">
                       <span>PDF Document</span>
                       <span className="text-[10px] font-normal text-neutral-400">(.pdf)</span>
+                      {isExporting && exportingFormat === 'pdf' && (
+                        <span className="text-[10px] font-medium text-rose-600 animate-pulse ml-auto">Validating & Exporting...</span>
+                      )}
                     </div>
                     <div className="text-[11px] text-neutral-500 truncate">
-                      Direct download .pdf document formatted for studying
+                      Vector-rendered PDF document verified for Adobe Acrobat Reader
                     </div>
                   </div>
                   <ChevronRight className="h-4 w-4 text-neutral-400 group-hover:text-rose-600 group-hover:translate-x-0.5 transition-all shrink-0" />
@@ -4678,31 +4751,23 @@ export function StudentNotes() {
                 {/* DOCX */}
                 <button
                   type="button"
-                  onClick={() => {
-                    setShowExportModal(false);
-                    const safeTitle = (activeNote.title || 'notes').replace(/[^a-z0-9_-]+/gi, '_').toLowerCase();
-                    const wordContent = generateWordContent(activeNote);
-                    const blob = new Blob([wordContent], { type: 'application/msword;charset=utf-8' });
-                    const url = URL.createObjectURL(blob);
-                    const link = document.createElement('a');
-                    link.href = url;
-                    link.download = `${safeTitle}.docx`;
-                    link.click();
-                    URL.revokeObjectURL(url);
-                    pushToast('Downloaded as Word Document (.docx)', 'success');
-                  }}
-                  className="w-full flex items-center gap-3 p-2.5 sm:p-3 rounded-xl border border-neutral-200 bg-white hover:border-blue-400 hover:bg-blue-50/40 hover:shadow-xs transition-all text-left cursor-pointer group"
+                  disabled={isExporting}
+                  onClick={() => handleExportNote('docx')}
+                  className="w-full flex items-center gap-3 p-2.5 sm:p-3 rounded-xl border border-neutral-200 bg-white hover:border-blue-400 hover:bg-blue-50/40 hover:shadow-xs transition-all text-left cursor-pointer group disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <div className="h-9 w-9 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-xs shrink-0 group-hover:scale-105 transition-transform">
-                    DOCX
+                    {isExporting && exportingFormat === 'docx' ? '...' : 'DOCX'}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="text-xs sm:text-sm font-semibold text-neutral-900 group-hover:text-blue-900 flex items-center gap-1.5">
                       <span>Microsoft Word</span>
                       <span className="text-[10px] font-normal text-neutral-400">(.docx)</span>
+                      {isExporting && exportingFormat === 'docx' && (
+                        <span className="text-[10px] font-medium text-blue-600 animate-pulse ml-auto">Validating & Exporting...</span>
+                      )}
                     </div>
                     <div className="text-[11px] text-neutral-500 truncate">
-                      Direct download .docx Word document with headings and tables
+                      Native OpenXML Word document with styled cards and formulas
                     </div>
                   </div>
                   <ChevronRight className="h-4 w-4 text-neutral-400 group-hover:text-blue-600 group-hover:translate-x-0.5 transition-all shrink-0" />
@@ -4711,31 +4776,23 @@ export function StudentNotes() {
                 {/* PPTX */}
                 <button
                   type="button"
-                  onClick={() => {
-                    setShowExportModal(false);
-                    const safeTitle = (activeNote.title || 'notes').replace(/[^a-z0-9_-]+/gi, '_').toLowerCase();
-                    const pptContent = generatePptContent(activeNote);
-                    const blob = new Blob([pptContent], { type: 'application/vnd.ms-powerpoint;charset=utf-8' });
-                    const url = URL.createObjectURL(blob);
-                    const link = document.createElement('a');
-                    link.href = url;
-                    link.download = `${safeTitle}.pptx`;
-                    link.click();
-                    URL.revokeObjectURL(url);
-                    pushToast('Downloaded as PowerPoint Presentation (.pptx)', 'success');
-                  }}
-                  className="w-full flex items-center gap-3 p-2.5 sm:p-3 rounded-xl border border-neutral-200 bg-white hover:border-amber-400 hover:bg-amber-50/40 hover:shadow-xs transition-all text-left cursor-pointer group"
+                  disabled={isExporting}
+                  onClick={() => handleExportNote('pptx')}
+                  className="w-full flex items-center gap-3 p-2.5 sm:p-3 rounded-xl border border-neutral-200 bg-white hover:border-amber-400 hover:bg-amber-50/40 hover:shadow-xs transition-all text-left cursor-pointer group disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <div className="h-9 w-9 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center font-bold text-xs shrink-0 group-hover:scale-105 transition-transform">
-                    PPTX
+                    {isExporting && exportingFormat === 'pptx' ? '...' : 'PPTX'}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="text-xs sm:text-sm font-semibold text-neutral-900 group-hover:text-amber-900 flex items-center gap-1.5">
                       <span>PowerPoint Slides</span>
                       <span className="text-[10px] font-normal text-neutral-400">(.pptx)</span>
+                      {isExporting && exportingFormat === 'pptx' && (
+                        <span className="text-[10px] font-medium text-amber-600 animate-pulse ml-auto">Validating & Exporting...</span>
+                      )}
                     </div>
                     <div className="text-[11px] text-neutral-500 truncate">
-                      Direct download .pptx presentation slide deck
+                      Native OpenXML presentation slides formatted for classroom decks
                     </div>
                   </div>
                   <ChevronRight className="h-4 w-4 text-neutral-400 group-hover:text-amber-600 group-hover:translate-x-0.5 transition-all shrink-0" />
@@ -4744,23 +4801,12 @@ export function StudentNotes() {
                 {/* TXT */}
                 <button
                   type="button"
-                  onClick={() => {
-                    setShowExportModal(false);
-                    const safeTitle = (activeNote.title || 'notes').replace(/[^a-z0-9_-]+/gi, '_').toLowerCase();
-                    const textContent = generatePlainTextContent(activeNote);
-                    const blob = new Blob([textContent], { type: 'text/plain;charset=utf-8' });
-                    const url = URL.createObjectURL(blob);
-                    const link = document.createElement('a');
-                    link.href = url;
-                    link.download = `${safeTitle}.txt`;
-                    link.click();
-                    URL.revokeObjectURL(url);
-                    pushToast('Downloaded as Plain Text (.txt)', 'success');
-                  }}
-                  className="w-full flex items-center gap-3 p-2.5 sm:p-3 rounded-xl border border-neutral-200 bg-white hover:border-emerald-400 hover:bg-emerald-50/40 hover:shadow-xs transition-all text-left cursor-pointer group"
+                  disabled={isExporting}
+                  onClick={() => handleExportNote('txt')}
+                  className="w-full flex items-center gap-3 p-2.5 sm:p-3 rounded-xl border border-neutral-200 bg-white hover:border-emerald-400 hover:bg-emerald-50/40 hover:shadow-xs transition-all text-left cursor-pointer group disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <div className="h-9 w-9 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-xs shrink-0 group-hover:scale-105 transition-transform">
-                    TXT
+                    {isExporting && exportingFormat === 'txt' ? '...' : 'TXT'}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="text-xs sm:text-sm font-semibold text-neutral-900 group-hover:text-emerald-900 flex items-center gap-1.5">
@@ -4772,38 +4818,6 @@ export function StudentNotes() {
                     </div>
                   </div>
                   <ChevronRight className="h-4 w-4 text-neutral-400 group-hover:text-emerald-600 group-hover:translate-x-0.5 transition-all shrink-0" />
-                </button>
-
-                {/* MD */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowExportModal(false);
-                    const safeTitle = (activeNote.title || 'notes').replace(/[^a-z0-9_-]+/gi, '_').toLowerCase();
-                    const blob = new Blob([activeNote.content], { type: 'text/markdown;charset=utf-8' });
-                    const url = URL.createObjectURL(blob);
-                    const link = document.createElement('a');
-                    link.href = url;
-                    link.download = `${safeTitle}.md`;
-                    link.click();
-                    URL.revokeObjectURL(url);
-                    pushToast('Downloaded as Markdown (.md)', 'success');
-                  }}
-                  className="w-full flex items-center gap-3 p-2.5 sm:p-3 rounded-xl border border-neutral-200 bg-white hover:border-purple-400 hover:bg-purple-50/40 hover:shadow-xs transition-all text-left cursor-pointer group"
-                >
-                  <div className="h-9 w-9 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center font-bold text-xs shrink-0 group-hover:scale-105 transition-transform">
-                    MD
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs sm:text-sm font-semibold text-neutral-900 group-hover:text-purple-900 flex items-center gap-1.5">
-                      <span>Markdown Document</span>
-                      <span className="text-[10px] font-normal text-neutral-400">(.md)</span>
-                    </div>
-                    <div className="text-[11px] text-neutral-500 truncate">
-                      Direct download .md Markdown document
-                    </div>
-                  </div>
-                  <ChevronRight className="h-4 w-4 text-neutral-400 group-hover:text-purple-600 group-hover:translate-x-0.5 transition-all shrink-0" />
                 </button>
               </div>
             </div>
@@ -4819,23 +4833,25 @@ export function StudentNotes() {
               </Button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Confirm Delete Single Note Dialog */}
       <ConfirmDialog
         open={showDeleteNoteConfirm}
         title="Delete Note?"
-        description={`Are you sure you want to permanently delete "${activeNote?.title || 'this note'}"? This action cannot be undone.`}
+        description={`Are you sure you want to permanently delete "${(noteToDelete || activeNote)?.title || 'this note'}"? This action cannot be undone.`}
         confirmLabel="Delete"
         confirmVariant="danger"
         loading={isDeletingNote}
         onConfirm={async () => {
-          if (!activeNote) return;
+          const target = noteToDelete || activeNote;
+          if (!target) return;
           setIsDeletingNote(true);
           try {
-            const deletedTitle = activeNote.title;
-            const deletedId = activeNote.id;
+            const deletedTitle = target.title;
+            const deletedId = target.id;
             const ok = await deleteNote(deletedId);
             if (!ok) {
               setNotesError('The note could not be deleted from storage.');
@@ -4844,9 +4860,12 @@ export function StudentNotes() {
             }
             const remaining = notes.filter(item => item.id !== deletedId);
             setNotes(remaining);
-            setActiveNote(remaining.length > 0 ? remaining[0] : null);
-            setGenerated(remaining.length > 0);
+            if (activeNote?.id === deletedId) {
+              setActiveNote(remaining.length > 0 ? remaining[0] : null);
+              setGenerated(remaining.length > 0);
+            }
             setShowDeleteNoteConfirm(false);
+            setNoteToDelete(null);
             pushToast(`Deleted note "${deletedTitle}".`, 'success');
           } catch (err) {
             console.error('Delete note error:', err);
@@ -4855,7 +4874,10 @@ export function StudentNotes() {
             setIsDeletingNote(false);
           }
         }}
-        onCancel={() => setShowDeleteNoteConfirm(false)}
+        onCancel={() => {
+          setShowDeleteNoteConfirm(false);
+          setNoteToDelete(null);
+        }}
       />
 
       {/* Confirm Delete All Dialog */}

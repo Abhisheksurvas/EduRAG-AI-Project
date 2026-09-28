@@ -1,6 +1,7 @@
 import { cn } from '@/lib/utils';
 import type { LucideIcon } from 'lucide-react';
 import { type ReactNode, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { CheckCircle2, XCircle, AlertTriangle, X } from 'lucide-react';
 
 export function Card({
@@ -395,35 +396,54 @@ export function ConfirmDialog({
 }) {
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancel(); };
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !loading) onCancel(); };
     document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open, onCancel]);
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open, loading, onCancel]);
 
   if (!open) return null;
 
-  return (
+  const content = (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      className="fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-6 overflow-y-auto"
+      style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999 }}
       role="dialog"
       aria-modal="true"
       aria-labelledby="confirm-dialog-title"
     >
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-slate-950/50 backdrop-blur-sm" onClick={onCancel} />
-      {/* Dialog */}
-      <div className="relative bg-white rounded-2xl shadow-xl max-w-md w-full p-6 border border-neutral-200">
-        <h2 id="confirm-dialog-title" className="font-display font-bold text-neutral-900 text-lg">{title}</h2>
-        <div className="mt-2 text-sm text-neutral-600">{description}</div>
-        <div className="flex gap-3 mt-6 justify-end">
-          <Button variant="outline" onClick={onCancel} disabled={loading}>
+      {/* Backdrop: Dims background */}
+      <div
+        className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs transition-opacity"
+        style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 }}
+        onClick={loading ? undefined : onCancel}
+      />
+      {/* Dialog: Compact, centered horizontally + vertically */}
+      <div
+        className="relative bg-white rounded-2xl shadow-2xl max-w-sm sm:max-w-md w-full p-5 sm:p-6 border border-neutral-200/90 my-auto animate-in fade-in zoom-in-95 duration-150"
+        onClick={e => e.stopPropagation()}
+      >
+        <h2 id="confirm-dialog-title" className="font-display font-bold text-neutral-900 text-base sm:text-lg leading-tight">
+          {title}
+        </h2>
+        <div className="mt-2 text-xs sm:text-sm text-neutral-600 leading-relaxed">
+          {description}
+        </div>
+        <div className="flex gap-2.5 mt-5 sm:mt-6 justify-end">
+          <Button variant="outline" size="sm" onClick={onCancel} disabled={loading} className="cursor-pointer">
             Cancel
           </Button>
-          <Button variant={confirmVariant} onClick={onConfirm} disabled={loading}>
+          <Button variant={confirmVariant} size="sm" onClick={onConfirm} disabled={loading} className="cursor-pointer">
             {loading ? 'Deleting…' : confirmLabel}
           </Button>
         </div>
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(content, document.body) : content;
 }
