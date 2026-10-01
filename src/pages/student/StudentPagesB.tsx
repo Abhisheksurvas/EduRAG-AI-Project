@@ -1445,20 +1445,20 @@ useEffect(() => {
                             setAnswers(a => ({ ...a, [activeQuiz]: next }));
                           }}
                           className={cn(
-                            'w-full flex items-center gap-3 p-4 rounded-xl border text-left transition-all bg-white',
-                            isSelected ? 'border-primary-400 bg-primary-50 shadow-md shadow-primary-500/10' : 'border-neutral-200 hover:border-neutral-300 hover:bg-neutral-50',
+                            'w-full flex items-center gap-3 p-4 rounded-xl border text-left transition-all bg-white dark:bg-neutral-900',
+                            isSelected ? 'border-primary-400 bg-primary-50 dark:bg-primary-950/40 shadow-md shadow-primary-500/10' : 'border-neutral-200 dark:border-neutral-800 hover:border-neutral-300 dark:hover:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800/60',
                           )}
                         >
                           <div className={cn(
                             'grid place-items-center h-5 w-5 rounded border text-xs font-bold shrink-0 transition-colors',
-                            isSelected ? 'bg-primary-600 border-primary-600 text-white' : 'border-neutral-300 bg-white text-transparent'
+                            isSelected ? 'bg-primary-600 border-primary-600 text-white' : 'border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-transparent'
                           )}>
                             ✓
                           </div>
-                          <span className={cn('grid place-items-center h-8 w-8 rounded-full text-sm font-bold shrink-0', isSelected ? 'bg-primary-600 text-white shadow-sm' : 'bg-neutral-100 text-neutral-600')}>
+                          <span className={cn('grid place-items-center h-8 w-8 rounded-full text-sm font-bold shrink-0', isSelected ? 'bg-primary-600 text-white shadow-sm' : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300')}>
                             {String.fromCharCode(65 + i)}
                           </span>
-                          <span className="text-sm text-neutral-800 font-medium">{opt}</span>
+                          <span className="text-sm text-neutral-800 dark:text-neutral-200 font-medium">{opt}</span>
                         </button>
                       );
                     })}
@@ -1475,14 +1475,14 @@ useEffect(() => {
                       type="button"
                       onClick={() => setAnswers(a => ({ ...a, [activeQuiz]: i }))}
                       className={cn(
-                        'w-full flex items-center gap-3 p-4 rounded-xl border text-left transition-all bg-white',
-                        answers[activeQuiz] === i ? 'border-primary-400 bg-primary-50 shadow-md shadow-primary-500/10' : 'border-neutral-200 hover:border-neutral-300 hover:bg-neutral-50',
+                        'w-full flex items-center gap-3 p-4 rounded-xl border text-left transition-all bg-white dark:bg-neutral-900',
+                        answers[activeQuiz] === i ? 'border-primary-400 bg-primary-50 dark:bg-primary-950/40 shadow-md shadow-primary-500/10' : 'border-neutral-200 dark:border-neutral-800 hover:border-neutral-300 dark:hover:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800/60',
                       )}
                     >
-                      <span className={cn('grid place-items-center h-8 w-8 rounded-full text-sm font-bold shrink-0', answers[activeQuiz] === i ? 'bg-primary-600 text-white shadow-sm' : 'bg-neutral-100 text-neutral-600')}>
+                      <span className={cn('grid place-items-center h-8 w-8 rounded-full text-sm font-bold shrink-0', answers[activeQuiz] === i ? 'bg-primary-600 text-white shadow-sm' : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300')}>
                         {String.fromCharCode(65 + i)}
                       </span>
-                      <span className="text-sm text-neutral-800 font-medium">{opt}</span>
+                      <span className="text-sm text-neutral-800 dark:text-neutral-200 font-medium">{opt}</span>
                     </button>
                   ))}
                 </div>
@@ -1879,8 +1879,8 @@ useEffect(() => {
                                 const isThisCorrect = correctArr.includes(optIdx);
                                 const isStudentPick = chosenArr.includes(optIdx);
 
-                                let cardStyle = 'border-neutral-200 bg-white text-neutral-600 opacity-75';
-                                let badgeStyle = 'bg-neutral-100 text-neutral-600 border border-neutral-300';
+                                let cardStyle = 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-600 dark:text-neutral-300 opacity-75';
+                                let badgeStyle = 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 border border-neutral-300 dark:border-neutral-700';
                                 let tagLabel: React.ReactNode = null;
 
                                 if (isThisCorrect && isStudentPick) {
@@ -1970,13 +1970,13 @@ useEffect(() => {
                                 const isThisCorrect = optIdx === correctIdx;
                                 const isStudentPick = optIdx === studentChoiceIdx;
 
-                                let cardStyle = 'border-neutral-200 bg-white text-neutral-600 opacity-75';
-                                let badgeStyle = 'bg-neutral-100 text-neutral-600 border border-neutral-300';
+                                let cardStyle = 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-600 dark:text-neutral-300 opacity-75';
+                                let badgeStyle = 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 border border-neutral-300 dark:border-neutral-700';
                                 let tagLabel: React.ReactNode = null;
 
                                 if (isStudentPick && isThisCorrect) {
                                   // Student picked this AND it is correct -> GREEN!
-                                  cardStyle = 'border-2 border-emerald-500 bg-emerald-50 text-emerald-950 font-semibold shadow-sm ring-2 ring-emerald-400/30';
+                                  cardStyle = 'border-2 border-emerald-500 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-950 dark:text-emerald-100 font-semibold shadow-sm ring-2 ring-emerald-400/30';
                                   badgeStyle = 'bg-emerald-600 text-white font-bold';
                                   tagLabel = (
                                     <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-600 text-white shrink-0 shadow-xs">
@@ -1986,7 +1986,7 @@ useEffect(() => {
                                   );
                                 } else if (isStudentPick && !isThisCorrect) {
                                   // Student picked this AND it is wrong -> RED!
-                                  cardStyle = 'border-2 border-red-500 bg-red-50 text-red-950 font-semibold shadow-sm ring-2 ring-red-400/30';
+                                  cardStyle = 'border-2 border-red-500 bg-red-50 dark:bg-red-950/60 text-red-950 dark:text-red-100 font-semibold shadow-sm ring-2 ring-red-400/30';
                                   badgeStyle = 'bg-red-600 text-white font-bold';
                                   tagLabel = (
                                     <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-red-600 text-white shrink-0 shadow-xs">
@@ -1996,11 +1996,11 @@ useEffect(() => {
                                   );
                                 } else if (isThisCorrect) {
                                   // Correct option not picked -> GREEN!
-                                  cardStyle = 'border-2 border-emerald-500 bg-emerald-50/70 text-emerald-950 font-semibold ring-1 ring-emerald-400/20';
+                                  cardStyle = 'border-2 border-emerald-500 bg-emerald-50/70 dark:bg-emerald-950/40 text-emerald-950 dark:text-emerald-100 font-semibold ring-1 ring-emerald-400/20';
                                   badgeStyle = 'bg-emerald-600 text-white font-bold';
                                   tagLabel = (
-                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 shrink-0">
-                                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 shrink-0">
+                                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
                                       Correct Answer
                                     </span>
                                   );
@@ -2027,8 +2027,8 @@ useEffect(() => {
                         )}
 
                         {q.explanation && (
-                          <div className="mt-3 p-2.5 rounded-lg bg-white/80 border border-neutral-200 text-xs text-neutral-600">
-                            <span className="font-semibold text-neutral-800">Explanation: </span>
+                          <div className="mt-3 p-2.5 rounded-lg bg-white/80 dark:bg-neutral-900/80 border border-neutral-200 dark:border-neutral-800 text-xs text-neutral-600 dark:text-neutral-300">
+                            <span className="font-semibold text-neutral-800 dark:text-neutral-200">Explanation: </span>
                             {q.explanation}
                           </div>
                         )}
@@ -2230,7 +2230,7 @@ useEffect(() => {
             </div>
             <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-4">
               <div>
-                <label className="text-sm font-semibold text-neutral-700 mb-2.5 block">
+                <label className="text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-2.5 block">
                   Topic / Chapter <span className="text-error-500">*</span>
                 </label>
                 <input
@@ -2239,11 +2239,11 @@ useEffect(() => {
                   value={genTopic}
                   onChange={e => { setGenTopic(e.target.value); setGenError(null); }}
                   placeholder="e.g. Supervised Learning, Unit 1"
-                  className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 text-sm outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white"
+                  className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 dark:border-neutral-700 text-sm outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100"
                 />
               </div>
               <div>
-                <label className="text-sm font-semibold text-neutral-700 mb-2.5 block">
+                <label className="text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-2.5 block">
                   Questions <span className="text-error-500">*</span>
                 </label>
                 <input
@@ -2258,18 +2258,18 @@ useEffect(() => {
                     setGenError(null);
                   }}
                   placeholder="e.g. 5"
-                  className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 text-sm outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white"
+                  className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 dark:border-neutral-700 text-sm outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100"
                 />
               </div>
               <div>
-                <label className="text-sm font-semibold text-neutral-700 mb-2.5 block">
+                <label className="text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-2.5 block">
                   Difficulty <span className="text-error-500">*</span>
                 </label>
                 <select
                   required
                   value={genDifficulty}
                   onChange={e => { setGenDifficulty(e.target.value); setGenError(null); }}
-                  className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 text-sm outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white"
+                  className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 dark:border-neutral-700 text-sm outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100"
                 >
                   <option value="">— Select Difficulty —</option>
                   <option value="Easy">Easy</option>
@@ -2278,7 +2278,7 @@ useEffect(() => {
                 </select>
               </div>
               <div>
-                <label className="text-sm font-semibold text-neutral-700 mb-2.5 block flex items-center justify-between">
+                <label className="text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-2.5 block flex items-center justify-between">
                   <span>Time</span>
                   <span className="text-xs font-normal text-neutral-400">min</span>
                 </label>
@@ -2289,18 +2289,18 @@ useEffect(() => {
                   value={genTime}
                   onChange={e => setGenTime(e.target.value)}
                   placeholder="time(blank for no time)"
-                  className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 text-sm outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white"
+                  className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 dark:border-neutral-700 text-sm outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100"
                 />
                 <p className="mt-1 text-xs text-neutral-400">time(blank for no time)</p>
               </div>
               <div>
-                <label className="text-sm font-semibold text-neutral-700 mb-2.5 block">
+                <label className="text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-2.5 block">
                   Type of Que <span className="text-error-500">*</span>
                 </label>
                 <select
                   value={genQuestionType}
                   onChange={e => setGenQuestionType(e.target.value as 'MCQ' | 'MSQ' | 'NAT')}
-                  className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 text-sm outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white font-medium text-neutral-800"
+                  className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 dark:border-neutral-700 text-sm outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-neutral-900 font-medium text-neutral-800 dark:text-neutral-100"
                 >
                   <option value="MCQ">MCQ</option>
                   <option value="MSQ">MSQ</option>
@@ -2435,40 +2435,40 @@ useEffect(() => {
                       const docName = quiz.sourceName || (quiz.title.toLowerCase().includes('.pdf') ? quiz.title.match(/[^—–-]+(?:\.pdf)/i)?.[0]?.trim() : '') || (quiz.topic?.toLowerCase().includes('.pdf') ? quiz.topic.match(/[^—–-]+(?:\.pdf)/i)?.[0]?.trim() : '');
                       const isDoc = quiz.isDocumentBased || quiz.course === 'From Indexed Document' || Boolean(docName);
                       return (
-                        <div key={quiz.id} className="flex flex-col h-full p-4 rounded-xl border border-neutral-200 hover:bg-neutral-50 hover:border-neutral-300 transition-all bg-white shadow-xs">
+                        <div key={quiz.id} className="flex flex-col h-full p-4 rounded-xl border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-800/60 hover:border-neutral-300 dark:hover:border-neutral-700 transition-all bg-white dark:bg-neutral-900 shadow-xs">
                           <div className="flex items-start gap-3">
                             <div className={cn(
                               'grid place-items-center h-10 w-10 rounded-xl shrink-0',
-                              quiz.status === 'upcoming' ? 'bg-amber-100 text-amber-700' : 'bg-primary-100 text-primary-600'
+                              quiz.status === 'upcoming' ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-400' : 'bg-primary-100 text-primary-600 dark:bg-primary-950/60 dark:text-primary-400'
                             )}>
                               <HelpCircle className="h-5 w-5" />
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-1.5 flex-wrap">
-                                <h3 className="font-display font-semibold text-neutral-900 text-sm leading-snug">{quiz.title}</h3>
+                                <h3 className="font-display font-semibold text-neutral-900 dark:text-neutral-100 text-sm leading-snug">{quiz.title}</h3>
                                 <Badge tone={diff === 'Easy' ? 'success' : diff === 'Hard' ? 'error' : 'primary'}>
                                   {diff}
                                 </Badge>
                                 {isDoc && (
-                                  <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                                  <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
                                     <FileText className="h-3 w-3" />
                                     {docName || 'Notes PDF'}
                                   </span>
                                 )}
                               </div>
-                              <p className="text-xs text-neutral-500 mt-1">
-                                <span className="font-medium text-neutral-700">{quiz.course || 'AI Generated'}</span>
+                              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+                                <span className="font-medium text-neutral-700 dark:text-neutral-300">{quiz.course || 'AI Generated'}</span>
                                 {quiz.topic && <span> · {quiz.topic}</span>}
                               </p>
-                              <div className="flex items-center gap-3 mt-2.5 text-xs text-neutral-500 flex-wrap">
-                                <span className="flex items-center gap-1.5 font-medium text-neutral-700">
-                                  <HelpCircle className="h-3.5 w-3.5 text-neutral-400" /> {qCount} Questions
+                              <div className="flex items-center gap-3 mt-2.5 text-xs text-neutral-500 dark:text-neutral-400 flex-wrap">
+                                <span className="flex items-center gap-1.5 font-medium text-neutral-700 dark:text-neutral-300">
+                                  <HelpCircle className="h-3.5 w-3.5 text-neutral-400 dark:text-neutral-500" /> {qCount} Questions
                                 </span>
-                                <span className="flex items-center gap-1.5 font-medium text-neutral-700">
-                                  <Clock className="h-3.5 w-3.5 text-neutral-400" /> {durationMin === 0 ? 'Untimed' : `${durationMin} min`}
+                                <span className="flex items-center gap-1.5 font-medium text-neutral-700 dark:text-neutral-300">
+                                  <Clock className="h-3.5 w-3.5 text-neutral-400 dark:text-neutral-500" /> {durationMin === 0 ? 'Untimed' : `${durationMin} min`}
                                 </span>
-                                <span className="flex items-center gap-1 font-medium text-neutral-600 text-[11px]">
-                                  <Calendar className="h-3.5 w-3.5 text-neutral-400" />
+                                <span className="flex items-center gap-1 font-medium text-neutral-600 dark:text-neutral-400 text-[11px]">
+                                  <Calendar className="h-3.5 w-3.5 text-neutral-400 dark:text-neutral-500" />
                                   {formatQuizDate(quiz)}
                                 </span>
                               </div>
@@ -2513,21 +2513,21 @@ useEffect(() => {
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {quizList.filter((q: any) => q.status === 'completed' || attemptedQuizzes.has(q.id)).map((quiz: any) => (
-                      <div key={quiz.id} className="flex flex-col h-full p-4 rounded-xl border border-neutral-200 hover:bg-neutral-50 hover:border-neutral-300 transition-all bg-white shadow-xs">
+                      <div key={quiz.id} className="flex flex-col h-full p-4 rounded-xl border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-800/60 hover:border-neutral-300 dark:hover:border-neutral-700 transition-all bg-white dark:bg-neutral-900 shadow-xs">
                         <div className="flex items-start gap-3">
-                          <div className="grid place-items-center h-10 w-10 rounded-xl bg-success-100 text-success-600 shrink-0">
+                          <div className="grid place-items-center h-10 w-10 rounded-xl bg-success-100 text-success-600 dark:bg-success-950/60 dark:text-success-400 shrink-0">
                             <CheckCircle2 className="h-5 w-5" />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <h3 className="font-display font-semibold text-neutral-900 text-sm leading-snug">{quiz.title}</h3>
-                            <p className="text-xs text-neutral-500 mt-0.5">
-                              <span className="font-medium text-neutral-700">{quiz.course || 'AI Generated'}</span>
+                            <h3 className="font-display font-semibold text-neutral-900 dark:text-neutral-100 text-sm leading-snug">{quiz.title}</h3>
+                            <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+                              <span className="font-medium text-neutral-700 dark:text-neutral-300">{quiz.course || 'AI Generated'}</span>
                               {quiz.questions ? ` · ${quiz.questions} questions` : ''}
                             </p>
-                            <div className="flex items-center gap-1.5 mt-2 text-xs text-neutral-600">
-                              <Clock className="h-3.5 w-3.5 text-neutral-400 shrink-0" />
-                              <span className="font-medium text-neutral-700">Submitted:</span>
-                              <span className="text-neutral-500">{getQuizSubmittedTime(quiz)}</span>
+                            <div className="flex items-center gap-1.5 mt-2 text-xs text-neutral-600 dark:text-neutral-400">
+                              <Clock className="h-3.5 w-3.5 text-neutral-400 dark:text-neutral-500 shrink-0" />
+                              <span className="font-medium text-neutral-700 dark:text-neutral-300">Submitted:</span>
+                              <span className="text-neutral-500 dark:text-neutral-400">{getQuizSubmittedTime(quiz)}</span>
                             </div>
                           </div>
                         </div>
@@ -2714,10 +2714,10 @@ export function StudentAnalytics() {
             ].map(s => {
               const Icon = s.icon;
               return (
-                <div key={s.label} className={cn('p-5 rounded-xl border border-neutral-200 bg-white shadow-sm', `bg-${s.tone}-50`)}>
-                  <Icon className={cn('h-5.5 w-5.5 mb-3', `text-${s.tone}-600`)} />
-                  <p className="text-2xl font-bold font-display text-neutral-900">{s.value}</p>
-                  <p className="text-xs text-neutral-500 font-medium mt-1">{s.label}</p>
+                <div key={s.label} className={cn('p-5 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-sm')}>
+                  <Icon className={cn('h-5.5 w-5.5 mb-3', `text-${s.tone}-600 dark:text-${s.tone}-400`)} />
+                  <p className="text-2xl font-bold font-display text-neutral-900 dark:text-neutral-100">{s.value}</p>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 font-medium mt-1">{s.label}</p>
                 </div>
               );
             })}
@@ -2745,16 +2745,47 @@ export function StudentAnalytics() {
 /* ============ NOTIFICATIONS ============ */
 export function StudentNotifications() {
   const [items, setItems] = useState<any[]>([]);
-  const typeIcon = { quiz: HelpCircle, announcement: Bell, ai: Bot };
-  const typeTone = { quiz: 'primary', announcement: 'secondary', ai: 'accent' } as const;
+  const typeIcon: Record<string, any> = {
+    quiz: HelpCircle,
+    announcement: Bell,
+    ai: Bot,
+    grade: Award,
+    message: Mail,
+    reminder: Clock,
+    exam: Calendar,
+    system: AlertCircle,
+    alert: AlertTriangle,
+    assignment: FileText,
+    document: FileText,
+  };
+  const typeTone: Record<string, string> = {
+    quiz: 'primary',
+    announcement: 'secondary',
+    ai: 'accent',
+    grade: 'primary',
+    message: 'secondary',
+    reminder: 'accent',
+    exam: 'secondary',
+    system: 'secondary',
+    alert: 'primary',
+    assignment: 'primary',
+    document: 'secondary',
+  };
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
-    fetchNotifications().then(data => {
-      if (!cancelled) setItems(data);
-      setLoading(false);
-    });
+    fetchNotifications()
+      .then(data => {
+        if (!cancelled) setItems(Array.isArray(data) ? data : []);
+        setLoading(false);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setItems([]);
+          setLoading(false);
+        }
+      });
     return () => { cancelled = true; };
   }, []);
 
@@ -2793,12 +2824,21 @@ export function StudentNotifications() {
       ) : (
       <div className="space-y-3">
         {items.map(n => {
-          const Icon = typeIcon[n.type as keyof typeof typeIcon];
+          const rawType = typeof n.type === 'string' ? n.type.toLowerCase().trim() : '';
+          const Icon = typeIcon[rawType] || Bell;
+          const tone = typeTone[rawType] || 'primary';
+          const toneClass =
+            tone === 'accent'
+              ? 'bg-accent-100 text-accent-600 dark:bg-accent-950/60 dark:text-accent-400'
+              : tone === 'secondary'
+              ? 'bg-secondary-100 text-secondary-600 dark:bg-secondary-950/60 dark:text-secondary-400'
+              : 'bg-primary-100 text-primary-600 dark:bg-primary-950/60 dark:text-primary-400';
+
           return (
             <Card key={n.id} hover className={cn('p-5 border transition-all', !n.read ? 'border-primary-200 bg-primary-50/30 shadow-sm' : 'border-neutral-200 shadow-sm hover:shadow-md')} >
               <div className="flex items-start gap-4">
-                <div className={cn('grid place-items-center h-11 w-11 rounded-xl shrink-0', `bg-${typeTone[n.type as keyof typeof typeTone]}-100 text-${typeTone[n.type as keyof typeof typeTone]}-600`)}>
-                  <Icon className="h-5.5 w-5.5" />
+                <div className={cn('grid place-items-center h-11 w-11 rounded-xl shrink-0', toneClass)}>
+                  {Icon ? <Icon className="h-5.5 w-5.5" /> : <Bell className="h-5.5 w-5.5" />}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
@@ -2839,15 +2879,34 @@ export function StudentNotifications() {
 export function StudentBookmarks() {
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const typeIcon = { answer: Bot, note: StickyNote, document: FileText };
-  const typeTone = { answer: 'primary', note: 'accent', document: 'secondary' } as const;
+  const typeIcon: Record<string, any> = {
+    answer: Bot,
+    note: StickyNote,
+    document: FileText,
+    course: GraduationCap,
+    quiz: HelpCircle,
+  };
+  const typeTone: Record<string, string> = {
+    answer: 'primary',
+    note: 'accent',
+    document: 'secondary',
+    course: 'primary',
+    quiz: 'accent',
+  };
 
   useEffect(() => {
     let cancelled = false;
-    fetchBookmarks().then(data => {
-      if (!cancelled) setItems(data);
-      setLoading(false);
-    });
+    fetchBookmarks()
+      .then(data => {
+        if (!cancelled) setItems(Array.isArray(data) ? data : []);
+        setLoading(false);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setItems([]);
+          setLoading(false);
+        }
+      });
     return () => { cancelled = true; };
   }, []);
 
@@ -2861,12 +2920,21 @@ export function StudentBookmarks() {
       ) : (
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {items.map(b => {
-          const Icon = typeIcon[b.type as keyof typeof typeIcon];
+          const rawType = typeof b.type === 'string' ? b.type.toLowerCase().trim() : '';
+          const Icon = typeIcon[rawType] || Bookmark;
+          const tone = typeTone[rawType] || 'primary';
+          const toneClass =
+            tone === 'accent'
+              ? 'bg-accent-100 text-accent-600 dark:bg-accent-950/60 dark:text-accent-400'
+              : tone === 'secondary'
+              ? 'bg-secondary-100 text-secondary-600 dark:bg-secondary-950/60 dark:text-secondary-400'
+              : 'bg-primary-100 text-primary-600 dark:bg-primary-950/60 dark:text-primary-400';
+
           return (
             <Card key={b.id} hover className="p-5 border-neutral-200 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 bg-white">
               <div className="flex items-start gap-3">
-                <div className={cn('grid place-items-center h-11 w-11 rounded-xl shrink-0', `bg-${typeTone[b.type as keyof typeof typeTone]}-100 text-${typeTone[b.type as keyof typeof typeTone]}-600`)}>
-                  <Icon className="h-5.5 w-5.5" />
+                <div className={cn('grid place-items-center h-11 w-11 rounded-xl shrink-0', toneClass)}>
+                  {Icon ? <Icon className="h-5.5 w-5.5" /> : <Bookmark className="h-5.5 w-5.5" />}
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-semibold text-neutral-900 line-clamp-2">{b.title}</p>
@@ -2948,39 +3016,39 @@ export function StudentProfile() {
       ) : (
       <div className="grid lg:grid-cols-3 gap-6">
         {/* Profile card */}
-        <Card className="lg:col-span-1 border-neutral-200 shadow-sm hover:shadow-md transition-shadow">
+        <Card className="lg:col-span-1 border-neutral-200 dark:border-neutral-800 shadow-sm hover:shadow-md transition-shadow">
           <CardBody className="text-center">
             <div className="relative inline-block">
               <Avatar name={student.name} size="xl" tone="primary" />
-              <button className="absolute bottom-1 right-1 grid place-items-center h-9 w-9 rounded-full bg-white border border-neutral-200 text-neutral-500 hover:text-primary-600 hover:border-primary-300 shadow-md hover:shadow-lg transition-all">
+              <button className="absolute bottom-1 right-1 grid place-items-center h-9 w-9 rounded-full bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 text-neutral-500 dark:text-neutral-400 hover:text-primary-600 dark:hover:text-primary-400 hover:border-primary-300 dark:hover:border-primary-600 shadow-md hover:shadow-lg transition-all">
                 <Camera className="h-4 w-4" />
               </button>
             </div>
-            <h3 className="font-display font-bold text-xl text-neutral-900 mt-5">{student.name}</h3>
-            <p className="text-sm text-neutral-500 mt-1">{student.email}</p>
+            <h3 className="font-display font-bold text-xl text-neutral-900 dark:text-neutral-100 mt-5">{student.name}</h3>
+            <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1">{student.email}</p>
             <div className="flex items-center justify-center gap-2 mt-4">
               <Badge tone="primary">{student.id}</Badge>
               <Badge tone="success">Active</Badge>
             </div>
-            <div className="grid grid-cols-3 gap-3 mt-6 pt-6 border-t border-neutral-200">
-              <div><p className="text-xl font-bold font-display text-neutral-900">{coursesCount}</p><p className="text-xs text-neutral-500 font-medium mt-0.5">Courses</p></div>
-              <div><p className="text-xl font-bold font-display text-neutral-900">{student.credits}</p><p className="text-xs text-neutral-500 font-medium mt-0.5">Credits</p></div>
-              <div><p className="text-xl font-bold font-display text-neutral-900">{student.streak}</p><p className="text-xs text-neutral-500 font-medium mt-0.5">Day Streak</p></div>
+            <div className="grid grid-cols-3 gap-3 mt-6 pt-6 border-t border-neutral-200 dark:border-neutral-800">
+              <div><p className="text-xl font-bold font-display text-neutral-900 dark:text-neutral-100">{coursesCount}</p><p className="text-xs text-neutral-500 dark:text-neutral-400 font-medium mt-0.5">Courses</p></div>
+              <div><p className="text-xl font-bold font-display text-neutral-900 dark:text-neutral-100">{student.credits}</p><p className="text-xs text-neutral-500 dark:text-neutral-400 font-medium mt-0.5">Credits</p></div>
+              <div><p className="text-xl font-bold font-display text-neutral-900 dark:text-neutral-100">{student.streak}</p><p className="text-xs text-neutral-500 dark:text-neutral-400 font-medium mt-0.5">Day Streak</p></div>
             </div>
           </CardBody>
         </Card>
 
         <div className="lg:col-span-2 space-y-6">
           {editing ? (
-            <Card className="border-neutral-200 shadow-sm">
+            <Card className="border-neutral-200 dark:border-neutral-800 shadow-sm">
               <CardHeader title="Edit Profile" icon={Pencil} />
               <CardBody>
                 <div className="grid sm:grid-cols-2 gap-5">
-                  <div><label className="text-xs text-neutral-500 font-bold mb-1.5 block">Full Name</label><input className="w-full h-11 px-4 rounded-xl bg-white border border-neutral-200 text-sm outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-500/20 transition-all" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></div>
-                  <div><label className="text-xs text-neutral-500 font-bold mb-1.5 block">Email</label><input className="w-full h-11 px-4 rounded-xl bg-white border border-neutral-200 text-sm outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-500/20 transition-all" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} /></div>
-                  <div><label className="text-xs text-neutral-500 font-bold mb-1.5 block">Program</label><input className="w-full h-11 px-4 rounded-xl bg-white border border-neutral-200 text-sm outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-500/20 transition-all" value={form.program} onChange={e => setForm(f => ({ ...f, program: e.target.value }))} /></div>
-                  <div><label className="text-xs text-neutral-500 font-bold mb-1.5 block">Year</label><input className="w-full h-11 px-4 rounded-xl bg-white border border-neutral-200 text-sm outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-500/20 transition-all" value={form.year} onChange={e => setForm(f => ({ ...f, year: e.target.value }))} /></div>
-                  <div><label className="text-xs text-neutral-500 font-bold mb-1.5 block">Semester</label><input type="number" className="w-full h-11 px-4 rounded-xl bg-white border border-neutral-200 text-sm outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-500/20 transition-all" value={form.semester} onChange={e => setForm(f => ({ ...f, semester: Number(e.target.value) }))} /></div>
+                  <div><label className="text-xs text-neutral-500 dark:text-neutral-400 font-bold mb-1.5 block">Full Name</label><input className="w-full h-11 px-4 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 text-sm text-neutral-900 dark:text-neutral-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-500/20 transition-all" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></div>
+                  <div><label className="text-xs text-neutral-500 dark:text-neutral-400 font-bold mb-1.5 block">Email</label><input className="w-full h-11 px-4 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 text-sm text-neutral-900 dark:text-neutral-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-500/20 transition-all" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} /></div>
+                  <div><label className="text-xs text-neutral-500 dark:text-neutral-400 font-bold mb-1.5 block">Program</label><input className="w-full h-11 px-4 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 text-sm text-neutral-900 dark:text-neutral-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-500/20 transition-all" value={form.program} onChange={e => setForm(f => ({ ...f, program: e.target.value }))} /></div>
+                  <div><label className="text-xs text-neutral-500 dark:text-neutral-400 font-bold mb-1.5 block">Year</label><input className="w-full h-11 px-4 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 text-sm text-neutral-900 dark:text-neutral-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-500/20 transition-all" value={form.year} onChange={e => setForm(f => ({ ...f, year: e.target.value }))} /></div>
+                  <div><label className="text-xs text-neutral-500 dark:text-neutral-400 font-bold mb-1.5 block">Semester</label><input type="number" className="w-full h-11 px-4 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 text-sm text-neutral-900 dark:text-neutral-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-500/20 transition-all" value={form.semester} onChange={e => setForm(f => ({ ...f, semester: Number(e.target.value) }))} /></div>
                 </div>
                 <div className="flex gap-3 mt-6">
                   <Button icon={Check} onClick={saveEdit} className="h-11">Save Changes</Button>
@@ -2991,7 +3059,7 @@ export function StudentProfile() {
           ) : (
             <>
               {/* Personal Info */}
-              <Card className="border-neutral-200 shadow-sm hover:shadow-md transition-shadow">
+              <Card className="border-neutral-200 dark:border-neutral-800 shadow-sm hover:shadow-md transition-shadow">
                 <CardHeader title="Personal Information" icon={User} />
                 <CardBody>
                   <div className="grid sm:grid-cols-2 gap-4">
@@ -3004,10 +3072,10 @@ export function StudentProfile() {
                       const Icon = f.icon;
                       return (
                         <div key={f.label}>
-                          <label className="text-xs text-neutral-500 font-bold mb-1.5 block">{f.label}</label>
-                          <div className="flex items-center gap-2.5 h-11 px-4 rounded-xl bg-neutral-50 border border-neutral-200">
-                            <Icon className="h-4.5 w-4.5 text-neutral-400" />
-                            <span className="text-sm text-neutral-700 font-medium">{f.value}</span>
+                          <label className="text-xs text-neutral-500 dark:text-neutral-400 font-bold mb-1.5 block">{f.label}</label>
+                          <div className="flex items-center gap-2.5 h-11 px-4 rounded-xl bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-700">
+                            <Icon className="h-4.5 w-4.5 text-neutral-400 dark:text-neutral-500" />
+                            <span className="text-sm text-neutral-700 dark:text-neutral-200 font-medium">{f.value}</span>
                           </div>
                         </div>
                       );
@@ -3017,26 +3085,26 @@ export function StudentProfile() {
               </Card>
 
               {/* Academic Info */}
-              <Card className="border-neutral-200 shadow-sm hover:shadow-md transition-shadow">
+              <Card className="border-neutral-200 dark:border-neutral-800 shadow-sm hover:shadow-md transition-shadow">
                 <CardHeader title="Academic Information" icon={GraduationCap} />
                 <CardBody>
                   <div className="grid sm:grid-cols-2 gap-4">
-                    <div><label className="text-xs text-neutral-500 font-bold mb-1.5 block">Program</label><div className="mt-1 h-11 px-4 rounded-xl bg-neutral-50 border border-neutral-200 flex items-center text-sm text-neutral-700 font-medium">{student.program}</div></div>
-                    <div><label className="text-xs text-neutral-500 font-bold mb-1.5 block">Year</label><div className="mt-1 h-11 px-4 rounded-xl bg-neutral-50 border border-neutral-200 flex items-center text-sm text-neutral-700 font-medium">{student.year}</div></div>
-                    <div><label className="text-xs text-neutral-500 font-bold mb-1.5 block">Semester</label><div className="mt-1 h-11 px-4 rounded-xl bg-neutral-50 border border-neutral-200 flex items-center text-sm text-neutral-700 font-medium">Semester {student.semester}</div></div>
-                    <div><label className="text-xs text-neutral-500 font-bold mb-1.5 block">Credits Earned</label><div className="mt-1 h-11 px-4 rounded-xl bg-neutral-50 border border-neutral-200 flex items-center text-sm text-neutral-700 font-medium">{student.credits} / 160</div></div>
+                    <div><label className="text-xs text-neutral-500 dark:text-neutral-400 font-bold mb-1.5 block">Program</label><div className="mt-1 h-11 px-4 rounded-xl bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-700 flex items-center text-sm text-neutral-700 dark:text-neutral-200 font-medium">{student.program}</div></div>
+                    <div><label className="text-xs text-neutral-500 dark:text-neutral-400 font-bold mb-1.5 block">Year</label><div className="mt-1 h-11 px-4 rounded-xl bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-700 flex items-center text-sm text-neutral-700 dark:text-neutral-200 font-medium">{student.year}</div></div>
+                    <div><label className="text-xs text-neutral-500 dark:text-neutral-400 font-bold mb-1.5 block">Semester</label><div className="mt-1 h-11 px-4 rounded-xl bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-700 flex items-center text-sm text-neutral-700 dark:text-neutral-200 font-medium">Semester {student.semester}</div></div>
+                    <div><label className="text-xs text-neutral-500 dark:text-neutral-400 font-bold mb-1.5 block">Credits Earned</label><div className="mt-1 h-11 px-4 rounded-xl bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-700 flex items-center text-sm text-neutral-700 dark:text-neutral-200 font-medium">{student.credits} / 160</div></div>
                   </div>
                 </CardBody>
               </Card>
 
               {/* Change Password */}
-              <Card className="border-neutral-200 shadow-sm hover:shadow-md transition-shadow">
+              <Card className="border-neutral-200 dark:border-neutral-800 shadow-sm hover:shadow-md transition-shadow">
                 <CardHeader title="Change Password" icon={Lock} />
                 <CardBody>
                   <div className="grid sm:grid-cols-2 gap-4">
-                    <div className="sm:col-span-2"><label className="text-xs text-neutral-500 font-bold mb-1.5 block">Current Password</label><input type="password" className="w-full h-11 px-4 rounded-xl bg-white border border-neutral-200 text-sm outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-500/20 transition-all" placeholder="••••••••" /></div>
-                    <div><label className="text-xs text-neutral-500 font-bold mb-1.5 block">New Password</label><input type="password" className="w-full h-11 px-4 rounded-xl bg-white border border-neutral-200 text-sm outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-500/20 transition-all" placeholder="••••••••" /></div>
-                    <div><label className="text-xs text-neutral-500 font-bold mb-1.5 block">Confirm Password</label><input type="password" className="w-full h-11 px-4 rounded-xl bg-white border border-neutral-200 text-sm outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-500/20 transition-all" placeholder="••••••••" /></div>
+                    <div className="sm:col-span-2"><label className="text-xs text-neutral-500 dark:text-neutral-400 font-bold mb-1.5 block">Current Password</label><input type="password" className="w-full h-11 px-4 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 text-sm text-neutral-900 dark:text-neutral-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-500/20 transition-all placeholder:text-neutral-400 dark:placeholder:text-neutral-600" placeholder="••••••••" /></div>
+                    <div><label className="text-xs text-neutral-500 dark:text-neutral-400 font-bold mb-1.5 block">New Password</label><input type="password" className="w-full h-11 px-4 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 text-sm text-neutral-900 dark:text-neutral-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-500/20 transition-all placeholder:text-neutral-400 dark:placeholder:text-neutral-600" placeholder="••••••••" /></div>
+                    <div><label className="text-xs text-neutral-500 dark:text-neutral-400 font-bold mb-1.5 block">Confirm Password</label><input type="password" className="w-full h-11 px-4 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 text-sm text-neutral-900 dark:text-neutral-100 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-500/20 transition-all placeholder:text-neutral-400 dark:placeholder:text-neutral-600" placeholder="••••••••" /></div>
                   </div>
                   <Button className="mt-5 h-11" size="sm" icon={Check}>Update Password</Button>
                 </CardBody>

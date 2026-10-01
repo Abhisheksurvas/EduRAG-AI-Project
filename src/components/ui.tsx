@@ -16,8 +16,8 @@ export function Card({
   return (
     <div
       className={cn(
-        'rounded-2xl bg-white border border-neutral-200/80 card-shadow',
-        hover && 'transition-all duration-300 hover:card-shadow-lg hover:-translate-y-0.5 hover:border-neutral-300',
+        'rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200/80 dark:border-neutral-800 card-shadow',
+        hover && 'transition-all duration-300 hover:card-shadow-lg hover:-translate-y-0.5 hover:border-neutral-300 dark:hover:border-neutral-700',
         className,
       )}
     >
@@ -45,13 +45,13 @@ export function CardHeader({
     <div className="flex items-start justify-between gap-4 px-6 pt-6">
       <div className="flex items-start gap-3 min-w-0">
         {Icon && (
-          <div className="grid place-items-center h-10 w-10 rounded-xl bg-primary-50 text-primary-600 shrink-0">
+          <div className="grid place-items-center h-10 w-10 rounded-xl bg-primary-50 dark:bg-primary-950/60 text-primary-600 dark:text-primary-400 shrink-0">
             <Icon className="h-5 w-5" />
           </div>
         )}
         <div className="min-w-0">
-          <h3 className="font-display font-semibold text-neutral-900 text-base truncate">{title}</h3>
-          {subtitle && <p className="text-sm text-neutral-500 mt-0.5">{subtitle}</p>}
+          <h3 className="font-display font-semibold text-neutral-900 dark:text-neutral-100 text-base truncate">{title}</h3>
+          {subtitle && <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-0.5">{subtitle}</p>}
         </div>
       </div>
       {action}
@@ -66,13 +66,13 @@ export function CardBody({ children, className }: { children: ReactNode; classNa
 type BadgeTone = 'primary' | 'success' | 'warning' | 'error' | 'neutral' | 'accent' | 'secondary';
 
 const badgeTones: Record<BadgeTone, string> = {
-  primary: 'bg-primary-50 text-primary-700 ring-primary-200',
-  success: 'bg-success-50 text-success-700 ring-success-200',
-  warning: 'bg-warning-50 text-warning-700 ring-warning-200',
-  error: 'bg-error-50 text-error-700 ring-error-200',
-  neutral: 'bg-neutral-100 text-neutral-600 ring-neutral-200',
-  accent: 'bg-accent-50 text-accent-700 ring-accent-200',
-  secondary: 'bg-secondary-50 text-secondary-700 ring-secondary-200',
+  primary: 'bg-primary-50 text-primary-700 ring-primary-200 dark:bg-primary-950/60 dark:text-primary-300 dark:ring-primary-800/80',
+  success: 'bg-success-50 text-success-700 ring-success-200 dark:bg-success-950/60 dark:text-success-300 dark:ring-success-800/80',
+  warning: 'bg-warning-50 text-warning-700 ring-warning-200 dark:bg-warning-950/60 dark:text-warning-300 dark:ring-warning-800/80',
+  error: 'bg-error-50 text-error-700 ring-error-200 dark:bg-error-950/60 dark:text-error-300 dark:ring-error-800/80',
+  neutral: 'bg-neutral-100 text-neutral-600 ring-neutral-200 dark:bg-neutral-800 dark:text-neutral-300 dark:ring-neutral-700',
+  accent: 'bg-accent-50 text-accent-700 ring-accent-200 dark:bg-accent-950/60 dark:text-accent-300 dark:ring-accent-800/80',
+  secondary: 'bg-secondary-50 text-secondary-700 ring-secondary-200 dark:bg-secondary-950/60 dark:text-secondary-300 dark:ring-secondary-800/80',
 };
 
 export function Badge({
@@ -126,8 +126,8 @@ export function Button({
     success: 'bg-success-500 text-white hover:bg-success-600 active:bg-success-700',
     danger: 'bg-error-500 text-white hover:bg-error-600 active:bg-error-700',
     outline:
-      'border border-neutral-300 text-neutral-700 bg-white hover:bg-neutral-50 hover:border-neutral-400',
-    ghost: 'text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900',
+      'border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-200 bg-white dark:bg-neutral-900 hover:bg-neutral-50 dark:hover:bg-neutral-800 hover:border-neutral-400 dark:hover:border-neutral-600',
+    ghost: 'text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-100',
   };
   const sizes: Record<string, string> = {
     sm: 'h-8 px-3 text-sm gap-1.5 rounded-lg',
@@ -197,13 +197,13 @@ export function StatCard({
   tone?: BadgeTone;
 }) {
   const tones: Record<BadgeTone, string> = {
-    primary: 'bg-primary-50 text-primary-600',
-    success: 'bg-success-50 text-success-600',
-    warning: 'bg-warning-50 text-warning-600',
-    error: 'bg-error-50 text-error-600',
-    neutral: 'bg-neutral-100 text-neutral-600',
-    accent: 'bg-accent-50 text-accent-600',
-    secondary: 'bg-secondary-50 text-secondary-600',
+    primary: 'bg-primary-50 text-primary-600 dark:bg-primary-950/60 dark:text-primary-400',
+    success: 'bg-success-50 text-success-600 dark:bg-success-950/60 dark:text-success-400',
+    warning: 'bg-warning-50 text-warning-600 dark:bg-warning-950/60 dark:text-warning-400',
+    error: 'bg-error-50 text-error-600 dark:bg-error-950/60 dark:text-error-400',
+    neutral: 'bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300',
+    accent: 'bg-accent-50 text-accent-600 dark:bg-accent-950/60 dark:text-accent-400',
+    secondary: 'bg-secondary-50 text-secondary-600 dark:bg-secondary-950/60 dark:text-secondary-400',
   };
   const Icon = isReactComponent(icon) ? icon : null;
   return (
@@ -216,15 +216,17 @@ export function StatCard({
           <span
             className={cn(
               'text-xs font-semibold px-2 py-1 rounded-full',
-              trend.up ? 'bg-success-50 text-success-700' : 'bg-error-50 text-error-700',
+              trend.up
+                ? 'bg-success-50 text-success-700 dark:bg-success-950/60 dark:text-success-300'
+                : 'bg-error-50 text-error-700 dark:bg-error-950/60 dark:text-error-300',
             )}
           >
             {trend.up ? '▲' : '▼'} {trend.value}
           </span>
         )}
       </div>
-      <p className="mt-4 text-3xl font-bold font-display text-neutral-900">{value}</p>
-      <p className="text-sm text-neutral-500 mt-1">{label}</p>
+      <p className="mt-4 text-3xl font-bold font-display text-neutral-900 dark:text-neutral-100">{value}</p>
+      <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1">{label}</p>
     </Card>
   );
 }
@@ -281,12 +283,12 @@ export function EmptyState({
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
       {Icon && (
-        <div className="grid place-items-center h-16 w-16 rounded-2xl bg-neutral-100 text-neutral-400 mb-4">
+        <div className="grid place-items-center h-16 w-16 rounded-2xl bg-neutral-100 dark:bg-neutral-800 text-neutral-400 dark:text-neutral-500 mb-4">
           <Icon className="h-8 w-8" />
         </div>
       )}
-      <h3 className="font-display font-semibold text-neutral-700">{title}</h3>
-      {description && <p className="text-sm text-neutral-500 mt-1 max-w-sm">{description}</p>}
+      <h3 className="font-display font-semibold text-neutral-700 dark:text-neutral-200">{title}</h3>
+      {description && <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1 max-w-sm">{description}</p>}
       {action && <div className="mt-4">{action}</div>}
     </div>
   );
@@ -304,8 +306,8 @@ export function SectionHeader({
   return (
     <div className="flex flex-wrap items-end justify-between gap-4 mb-6">
       <div>
-        <h1 className="text-2xl font-bold font-display text-neutral-900">{title}</h1>
-        {description && <p className="text-neutral-500 mt-1">{description}</p>}
+        <h1 className="text-2xl font-bold font-display text-neutral-900 dark:text-neutral-100">{title}</h1>
+        {description && <p className="text-neutral-500 dark:text-neutral-400 mt-1">{description}</p>}
       </div>
       {action}
     </div>

@@ -11,8 +11,8 @@ export default function QuizCenter() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold font-display text-neutral-900">Quiz Center</h1>
-        <p className="text-neutral-500 text-sm mt-1">Take assessments, solve MCQs, and check your scoring reports.</p>
+        <h1 className="text-3xl font-bold font-display text-neutral-900 dark:text-neutral-100">Quiz Center</h1>
+        <p className="text-neutral-500 dark:text-neutral-400 text-sm mt-1">Take assessments, solve MCQs, and check your scoring reports.</p>
       </div>
 
       <div className="grid md:grid-cols-2 gap-6">
@@ -20,17 +20,19 @@ export default function QuizCenter() {
           <Card key={quiz.id} hover>
             <CardHeader title={quiz.title} subtitle={quiz.course} icon={HelpCircle} />
             <CardBody className="space-y-4">
-              <div className="flex justify-between items-center text-sm text-neutral-600">
+              <div className="flex justify-between items-center text-sm text-neutral-600 dark:text-neutral-400">
                 <span>Status:</span>
                 <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                  quiz.status === 'Available' ? 'bg-success-50 text-success-700' : 'bg-neutral-100 text-neutral-600'
+                  quiz.status === 'Available'
+                    ? 'bg-success-50 text-success-700 dark:bg-success-950/60 dark:text-success-300 dark:border dark:border-success-800'
+                    : 'bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300 dark:border dark:border-neutral-700'
                 }`}>
                   {quiz.status}
                 </span>
               </div>
-              <div className="flex justify-between text-sm text-neutral-600">
+              <div className="flex justify-between text-sm text-neutral-600 dark:text-neutral-400">
                 <span>Details:</span>
-                <span className="font-semibold text-neutral-900">
+                <span className="font-semibold text-neutral-900 dark:text-neutral-100">
                   {quiz.status === 'Completed' ? `Scored: ${quiz.score}` : `${quiz.qCount} MCQs · ${quiz.time}`}
                 </span>
               </div>
@@ -39,7 +41,7 @@ export default function QuizCenter() {
                   <Play className="h-4 w-4" /> Start Quiz
                 </button>
               ) : (
-                <button className="w-full flex items-center justify-center gap-1.5 py-2 px-3 text-sm font-semibold border border-neutral-200 text-neutral-700 hover:bg-neutral-50 rounded-lg transition-all">
+                <button className="w-full flex items-center justify-center gap-1.5 py-2 px-3 text-sm font-semibold border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-800 rounded-lg transition-all">
                   <Award className="h-4 w-4" /> Review Answers
                 </button>
               )}

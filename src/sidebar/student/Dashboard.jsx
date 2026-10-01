@@ -18,21 +18,21 @@ export default function Dashboard() {
         <Card hover>
           <CardHeader title="My Courses" icon={BookOpen} subtitle="View enrolled subjects" />
           <CardBody>
-            <p className="text-sm text-neutral-600">Access video modules, reference materials, slides and practice exercises.</p>
+            <p className="text-sm text-neutral-600 dark:text-neutral-300">Access video modules, reference materials, slides and practice exercises.</p>
           </CardBody>
         </Card>
 
         <Card hover>
           <CardHeader title="Quiz Center" icon={Award} subtitle="Practice & score" />
           <CardBody>
-            <p className="text-sm text-neutral-600">Take weekly quizzes, try mock exams, and review model answer sheets.</p>
+            <p className="text-sm text-neutral-600 dark:text-neutral-300">Take weekly quizzes, try mock exams, and review model answer sheets.</p>
           </CardBody>
         </Card>
 
         <Card hover>
           <CardHeader title="Recent Study" icon={Clock} subtitle="Pick up where you left" />
           <CardBody>
-            <p className="text-sm text-neutral-600">Resume learning Design & Analysis of Algorithms Chapter 3.</p>
+            <p className="text-sm text-neutral-600 dark:text-neutral-300">Resume learning Design & Analysis of Algorithms Chapter 3.</p>
           </CardBody>
         </Card>
       </div>

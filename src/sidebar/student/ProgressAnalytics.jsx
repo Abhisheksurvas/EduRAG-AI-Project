@@ -6,32 +6,32 @@ export default function ProgressAnalytics() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold font-display text-neutral-900">Progress Analytics</h1>
-        <p className="text-neutral-500 text-sm mt-1">Detailed statistics on your learning progress, test grades, and hours spent.</p>
+        <h1 className="text-3xl font-bold font-display text-neutral-900 dark:text-neutral-100">Progress Analytics</h1>
+        <p className="text-neutral-500 dark:text-neutral-400 text-sm mt-1">Detailed statistics on your learning progress, test grades, and hours spent.</p>
       </div>
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
         <Card hover>
           <CardHeader title="CGPA Grade" icon={TrendingUp} subtitle="Overall Semester CGPA" />
           <CardBody className="space-y-2">
-            <div className="text-3xl font-bold text-neutral-900">9.12 / 10</div>
-            <p className="text-xs text-success-600 font-medium">Top 5% in department</p>
+            <div className="text-3xl font-bold text-neutral-900 dark:text-neutral-100">9.12 / 10</div>
+            <p className="text-xs text-success-600 dark:text-success-400 font-medium">Top 5% in department</p>
           </CardBody>
         </Card>
 
         <Card hover>
           <CardHeader title="Study Hours" icon={Clock} subtitle="Total hours logged this month" />
           <CardBody className="space-y-2">
-            <div className="text-3xl font-bold text-neutral-900">42 Hours</div>
-            <p className="text-xs text-neutral-500">Average 1.4h / day</p>
+            <div className="text-3xl font-bold text-neutral-900 dark:text-neutral-100">42 Hours</div>
+            <p className="text-xs text-neutral-500 dark:text-neutral-400">Average 1.4h / day</p>
           </CardBody>
         </Card>
 
         <Card hover>
           <CardHeader title="Tasks Completed" icon={BookOpen} subtitle="quizzes & Quizzes finished" />
           <CardBody className="space-y-2">
-            <div className="text-3xl font-bold text-neutral-900">18 / 20</div>
-            <p className="text-xs text-primary-600 font-medium">90% completion rate</p>
+            <div className="text-3xl font-bold text-neutral-900 dark:text-neutral-100">18 / 20</div>
+            <p className="text-xs text-primary-600 dark:text-primary-400 font-medium">90% completion rate</p>
           </CardBody>
         </Card>
       </div>

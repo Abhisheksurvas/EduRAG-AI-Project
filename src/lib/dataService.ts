@@ -322,16 +322,16 @@ export function generateClientFallbackNotes(topic: string, type: string, context
   return generateAcademicNotes(topic, normType, context);
 }
 
-export async function notifyDocumentSelected(id: string, name: string): Promise<boolean> {
+export async function notifyDocumentSelected(id: string, name: string, source: string = 'Student Portal'): Promise<boolean> {
   try {
     const token = typeof window !== 'undefined' ? window.localStorage.getItem('edurag-auth-token') : null;
-    const res = await fetch('http://localhost:8000/api/notes/select-document', {
+    const res = await fetch('http://localhost:8000/api/materials/select', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify({ id, name }),
+      body: JSON.stringify({ id, name, source }),
     });
     return res.ok;
   } catch (err) {

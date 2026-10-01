@@ -25,6 +25,13 @@
   }
 }
 
+body.edurag-fullscreen .sidebar,
+.sidebar--hidden {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
 /* Brand Section */
 .sidebar-brand {
   height: 4rem; /* h-16 */
@@ -50,6 +57,7 @@
   width: 2.25rem;
   border-radius: 0.75rem;
   color: #ffffff;
+  background: linear-gradient(135deg, #4f46e5 0%, #3730a3 100%);
   box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
 }
 

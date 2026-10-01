@@ -12,6 +12,19 @@ export type ChatConversation = {
 
 const CHAT_HISTORY_STORAGE_KEY = 'edurag-chat-history';
 
+export function getCurrentUserEmail(): string {
+  try {
+    const raw = window.localStorage.getItem('edurag-current-account');
+    if (raw) {
+      const account = JSON.parse(raw);
+      return account?.email || '';
+    }
+  } catch {
+    // fall through
+  }
+  return '';
+}
+
 /**
  * Get the current user's ID from the auth session.
  * Falls back to a deterministic local ID if no session exists.
@@ -24,8 +37,8 @@ export function getCurrentUserId(): string {
       if (account && account.userId) {
         return account.userId;
       }
-      if (account && account.email && account.role) {
-        return `usr_${account.email.replace('@', '_').replace('.', '_')}_${account.role}`;
+      if (account && account.email) {
+        return `usr_${account.email.replace('@', '_').replace('.', '_')}`;
       }
     }
   } catch {
@@ -51,16 +64,21 @@ export function getCurrentUserRole(): 'student' {
 
 /**
  * Load all conversations for the current user from the backend (MongoDB).
- * If the backend returns no data (e.g. not authenticated), the local cache
- * is ignored entirely to prevent leaking history from a different account
- * or from a previous session.
+ * If the backend returns data, the local cache is updated and returned.
+ * If backend fails or is offline, loads cached conversations for this specific user.
  */
 export async function loadConversations(): Promise<ChatConversation[]> {
+  const currentUserId = getCurrentUserId();
+  const currentUserEmail = getCurrentUserEmail();
+  const currentRole = getCurrentUserRole();
+  const userCacheKey = `${CHAT_HISTORY_STORAGE_KEY}_${currentUserId}`;
+
   let backendConversations: ChatConversation[] = [];
   let backendSucceeded = false;
   try {
+    const query = `userId=${encodeURIComponent(currentUserId)}&email=${encodeURIComponent(currentUserEmail)}&role=${encodeURIComponent(currentRole)}`;
     const data = await apiGet<{ success: boolean; conversations: ChatConversation[] }>(
-      '/api/chat/history'
+      `/api/chat/history?${query}`
     );
     if (data && data.success && Array.isArray(data.conversations)) {
       backendConversations = deduplicateConversations(data.conversations);
@@ -70,32 +88,45 @@ export async function loadConversations(): Promise<ChatConversation[]> {
     console.warn('[ChatHistory] Failed to load from backend:', err);
   }
 
-  // If the backend call did not return a success response, do NOT fall back
-  // to localStorage — that would leak history from a different user or from
-  // a previous session. Return only what the backend confirmed belongs to
-  // this account.
-  if (!backendSucceeded) {
-    return [];
+  if (backendSucceeded) {
+    try {
+      window.localStorage.setItem(userCacheKey, JSON.stringify(backendConversations));
+      window.localStorage.setItem(CHAT_HISTORY_STORAGE_KEY, JSON.stringify(backendConversations));
+    } catch {
+      // ignore
+    }
+    return backendConversations;
   }
 
-  // Backend returned a success response. It's authoritative for the current
-  // authenticated user. Replace the local cache with this exact set so the
-  // cache never contains stale data from another account.
-  window.localStorage.setItem(CHAT_HISTORY_STORAGE_KEY, JSON.stringify(backendConversations));
-  return backendConversations;
+  // Fallback to cache for this specific user if backend call failed
+  try {
+    const cached = window.localStorage.getItem(userCacheKey) || window.localStorage.getItem(CHAT_HISTORY_STORAGE_KEY);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return deduplicateConversations(parsed);
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return [];
 }
 
 /**
  * Save a conversation to the backend (MongoDB) and localStorage cache.
  */
 export async function saveConversation(conversation: ChatConversation): Promise<ChatConversation> {
-  // Ensure the conversation has the current user's ID
   const currentUserId = getCurrentUserId();
+  const currentUserEmail = getCurrentUserEmail();
   const currentRole = getCurrentUserRole();
+  const userCacheKey = `${CHAT_HISTORY_STORAGE_KEY}_${currentUserId}`;
   
   const payload = {
     conversationId: conversation.conversationId,
     userId: currentUserId,
+    email: currentUserEmail,
     role: currentRole,
     title: conversation.title,
     messages: conversation.messages,
@@ -113,6 +144,7 @@ export async function saveConversation(conversation: ChatConversation): Promise<
     const existing = await loadConversationsFromCache();
     const filtered = existing.filter(c => c.conversationId !== conversation.conversationId);
     const updated = [conversation, ...filtered];
+    window.localStorage.setItem(userCacheKey, JSON.stringify(updated));
     window.localStorage.setItem(CHAT_HISTORY_STORAGE_KEY, JSON.stringify(updated));
   } catch {
     // ignore

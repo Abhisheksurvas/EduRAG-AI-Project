@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Bot, Send, Sparkles, BookOpen, ExternalLink, Paperclip, FileText, X } from 'lucide-react';
 import { Card, CardHeader, CardBody } from '@/components/ui';
+import { notifyDocumentSelected } from '@/lib/dataService';
 
 const STREAMLIT_APP_URL = 'http://localhost:8501';
 
@@ -37,6 +38,8 @@ export default function AIStudyAssistant() {
           topic: 'Algorithms and Course Materials',
           difficulty: 'Intermediate',
           question: userQuery,
+          selectedMaterialIds: attachment ? [attachment.name] : [],
+          responseMode: 'both',
           context: 'Course Syllabus and Lecture Notes'
         })
       });
@@ -58,7 +61,10 @@ export default function AIStudyAssistant() {
 
   const handleFileChange = (e) => {
     const [file] = e.target.files || [];
-    if (file) setAttachment(file);
+    if (file) {
+      setAttachment(file);
+      notifyDocumentSelected(file.name, file.name, 'AI Study Assistant (Sidebar)').catch(console.warn);
+    }
     e.target.value = '';
   };
 
@@ -105,7 +111,14 @@ export default function AIStudyAssistant() {
                   <div className="aisa-attachment-chip">
                     <FileText className="h-3.5 w-3.5" aria-hidden="true" />
                     <span className="max-w-[14rem] truncate">{attachment.name}</span>
-                    <button type="button" onClick={() => setAttachment(null)} aria-label={`Remove ${attachment.name}`}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAttachment(null);
+                        notifyDocumentSelected('none', 'No document attached', 'AI Study Assistant (Sidebar)').catch(console.warn);
+                      }}
+                      aria-label={`Remove ${attachment.name}`}
+                    >
                       <X className="h-3.5 w-3.5" aria-hidden="true" />
                     </button>
                   </div>

@@ -37,6 +37,11 @@ SIMILARITY_THRESHOLD: float = 0.35
 DEFAULT_TOP_K: int = 5
 EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
 
+import threading
+
+_model_lock = threading.Lock()
+_embedding_cache: dict[str, list[float]] = {}
+
 TOKEN_PATTERN = re.compile(r"[a-zA-Z0-9]{2,}")
 
 
@@ -49,20 +54,30 @@ _embedding_available: Optional[bool] = None  # None = not yet tried
 
 
 def _load_embedding_model():
-    """Load the sentence-transformer model once and cache it."""
+    """Load the sentence-transformer model once and cache it (thread-safe)."""
     global _embedding_model, _embedding_available
 
     if _embedding_available is not None:
         return _embedding_available
 
-    try:
-        from sentence_transformers import SentenceTransformer  # type: ignore
-        _embedding_model = SentenceTransformer(EMBEDDING_MODEL)
-        _embedding_available = True
-        logger.info("[RAG] Sentence-transformer model loaded: %s", EMBEDDING_MODEL)
-    except Exception as exc:  # pragma: no cover
-        logger.warning("[RAG] sentence-transformers unavailable, falling back to keyword search: %s", exc)
-        _embedding_available = False
+    with _model_lock:
+        if _embedding_available is not None:
+            return _embedding_available
+
+        try:
+            from sentence_transformers import SentenceTransformer  # type: ignore
+            try:
+                import torch
+                # Set optimal CPU thread count
+                torch.set_num_threads(max(1, min(4, (os.cpu_count() or 2) // 2)))
+            except Exception:
+                pass
+            _embedding_model = SentenceTransformer(EMBEDDING_MODEL)
+            _embedding_available = True
+            logger.info("[RAG] Sentence-transformer model loaded: %s", EMBEDDING_MODEL)
+        except Exception as exc:  # pragma: no cover
+            logger.warning("[RAG] sentence-transformers unavailable, falling back to keyword search: %s", exc)
+            _embedding_available = False
 
     return _embedding_available
 
@@ -77,13 +92,25 @@ def generate_embeddings(text: str) -> list[float]:
     if not text or not text.strip():
         return []
 
+    cleaned = text.strip()
+    cached = _embedding_cache.get(cleaned)
+    if cached is not None:
+        return cached
+
     if not _load_embedding_model():
         return []
 
     try:
-        import numpy as np  # type: ignore
-        vector = _embedding_model.encode(text.strip(), normalize_embeddings=True)
-        return vector.tolist()
+        try:
+            import torch
+            with torch.inference_mode():
+                vector = _embedding_model.encode(cleaned, normalize_embeddings=True, convert_to_numpy=True)
+        except Exception:
+            vector = _embedding_model.encode(cleaned, normalize_embeddings=True)
+        vec_list = vector.tolist() if hasattr(vector, "tolist") else list(vector)
+        if len(_embedding_cache) < 10000:
+            _embedding_cache[cleaned] = vec_list
+        return vec_list
     except Exception as exc:  # pragma: no cover
         logger.error("[RAG] Embedding generation failed: %s", exc)
         return []
@@ -92,37 +119,69 @@ def generate_embeddings(text: str) -> list[float]:
 def generate_embeddings_batch(texts: list[str]) -> list[list[float]]:
     """
     Return normalised float32 embedding vectors for a batch of *texts* in a
-    single vectorised call.  Encoding a list at once is dramatically faster
-    than calling :func:`generate_embeddings` per chunk (GPU/CPU batching and
-    amortised overhead), which is what makes document indexing quick.
+    single vectorised call. Encoding a list at once with inference mode and
+    caching is dramatically faster than individual encoding.
     """
     if not texts:
         return []
 
-    cleaned: list[str] = [t.strip() for t in texts if t and t.strip()]
-    if not cleaned:
-        return [[] for _ in texts]
+    cleaned: list[str] = [t.strip() for t in texts]
+    results: list[list[float] | None] = [None] * len(cleaned)
+    missing_indices: list[int] = []
+    missing_texts: list[str] = []
+
+    for i, t in enumerate(cleaned):
+        if not t:
+            results[i] = []
+            continue
+        cached = _embedding_cache.get(t)
+        if cached is not None:
+            results[i] = cached
+        else:
+            missing_indices.append(i)
+            missing_texts.append(t)
+
+    if not missing_texts:
+        return [r if r is not None else [] for r in results]
 
     if not _load_embedding_model():
-        return [[] for _ in texts]
+        return [r if r is not None else [] for r in results]
 
     try:
-        vectors = _embedding_model.encode(
-            cleaned,
-            normalize_embeddings=True,
-            batch_size=64,
-            show_progress_bar=False,
-        )
-        return [v.tolist() for v in vectors]
+        try:
+            import torch
+            with torch.inference_mode():
+                vectors = _embedding_model.encode(
+                    missing_texts,
+                    normalize_embeddings=True,
+                    batch_size=128,
+                    show_progress_bar=False,
+                    convert_to_numpy=True,
+                )
+        except Exception:
+            vectors = _embedding_model.encode(
+                missing_texts,
+                normalize_embeddings=True,
+                batch_size=128,
+                show_progress_bar=False,
+            )
+
+        for idx, vec in zip(missing_indices, vectors):
+            v_list = vec.tolist() if hasattr(vec, "tolist") else list(vec)
+            results[idx] = v_list
+            if len(_embedding_cache) < 10000:
+                _embedding_cache[cleaned[idx]] = v_list
+
+        return [r if r is not None else [] for r in results]
     except Exception as exc:  # pragma: no cover
         logger.error("[RAG] Batch embedding generation failed: %s", exc)
-        return [[] for _ in texts]
+        return [r if r is not None else [] for r in results]
 
 
 def warm_up_embeddings() -> None:
     """
     Load the embedding model up front (e.g. at server startup) so the first
-    document upload doesn't pay the lazy-load cost.  A tiny dummy encode
+    document upload doesn't pay the lazy-load cost. A tiny dummy encode
     triggers model download/instantiation without embedding a real document.
     Failures are non-fatal — the system degrades to keyword search.
     """
@@ -209,18 +268,20 @@ def _pil_to_array(image):
 
 def _ocr_pdf_pages(raw: bytes) -> list[dict]:
     """
-    Render each PDF page to an image and OCR it. Used as a fallback when a PDF
+    Render PDF pages to an image and OCR. Used as a fallback when a PDF
     has no extractable (text-layer) content — e.g. a scanned document.
+    Optimized with scale=1.2 and capped at 10 pages for speed.
     """
     try:
         import pypdfium2  # type: ignore
 
         pdf = pypdfium2.PdfDocument(io.BytesIO(raw))
         pages: list[dict] = []
-        for idx in range(len(pdf)):
+        max_pages = min(10, len(pdf))
+        for idx in range(max_pages):
             try:
                 page = pdf[idx]
-                bitmap = page.render(scale=2.0)
+                bitmap = page.render(scale=1.2)
                 pil_image = bitmap.to_pil()
                 text = _run_ocr_on_image(pil_image).strip()
                 pages.append({"page": idx + 1, "text": text})
@@ -234,7 +295,7 @@ def _ocr_pdf_pages(raw: bytes) -> list[dict]:
 
 
 def extract_text_from_bytes(filename: str, raw: bytes) -> list[dict]:
-    """Return extracted pages from raw bytes — no base64 involved."""
+    """Return extracted pages from raw bytes with ultra-fast C++ PDF extraction."""
     extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else "txt"
 
     if extension in {"txt", "md", "csv"}:
@@ -244,19 +305,36 @@ def extract_text_from_bytes(filename: str, raw: bytes) -> list[dict]:
         return _extract_text_from_image(raw)
 
     if extension == "pdf":
+        pages: list[dict] = []
+        # Fast path: pypdfium2 (Google C++ engine) extracts text up to 50x faster than pure-python pypdf
         try:
-            from pypdf import PdfReader  # type: ignore
-        except ImportError as exc:
-            raise ValueError("PDF processing requires pypdf on the server.") from exc
-        reader = PdfReader(io.BytesIO(raw))
-        pages = [
-            {"page": idx + 1, "text": page.extract_text() or ""}
-            for idx, page in enumerate(reader.pages)
-        ]
+            import pypdfium2  # type: ignore
+            pdf = pypdfium2.PdfDocument(io.BytesIO(raw))
+            for idx in range(len(pdf)):
+                page = pdf[idx]
+                textpage = page.get_textpage()
+                text = textpage.get_text_range() or ""
+                pages.append({"page": idx + 1, "text": text})
+        except Exception as exc:
+            logger.warning("[RAG] pypdfium2 fast extraction failed, falling back to pypdf: %s", exc)
+            pages = []
+
+        # Fallback to pypdf if pypdfium2 produced no pages
+        if not pages:
+            try:
+                from pypdf import PdfReader  # type: ignore
+                reader = PdfReader(io.BytesIO(raw))
+                pages = [
+                    {"page": idx + 1, "text": page.extract_text() or ""}
+                    for idx, page in enumerate(reader.pages)
+                ]
+            except Exception as exc:
+                logger.error("[RAG] pypdf extraction failed: %s", exc)
 
         # Scanned/image PDFs often have an empty text layer. Fall back to OCR
         # so the document can still be indexed instead of being rejected.
-        if sum(len(p.get("text", "").strip()) for p in pages) < 40:
+        total_text_len = sum(len(p.get("text", "").strip()) for p in pages)
+        if total_text_len < 40:
             logger.info("[RAG] PDF has no text layer — attempting OCR fallback")
             ocr_pages = _ocr_pdf_pages(raw)
             if sum(len(p.get("text", "").strip()) for p in ocr_pages) > 0:
@@ -273,7 +351,13 @@ def extract_text_from_bytes(filename: str, raw: bytes) -> list[dict]:
         except ImportError as exc:
             raise ValueError("DOCX processing requires python-docx on the server.") from exc
         document = Document(io.BytesIO(raw))
-        return [{"page": 1, "text": "\n".join(p.text for p in document.paragraphs)}]
+        texts = [p.text for p in document.paragraphs if p.text.strip()]
+        for table in document.tables:
+            for row in table.rows:
+                row_text = " | ".join(cell.text.strip() for cell in row.cells if cell.text.strip())
+                if row_text:
+                    texts.append(row_text)
+        return [{"page": 1, "text": "\n".join(texts)}]
 
     if extension in {"ppt", "pptx"}:
         if extension == "ppt":
@@ -512,12 +596,15 @@ def semantic_retrieve(
     if not query or not chunks:
         return []
 
-    selected = set(selected_material_ids) if selected_material_ids else set()
+    selected = set(str(s).strip() for s in selected_material_ids if s) if selected_material_ids else set()
+    selected_lower = {s.lower() for s in selected}
 
-    # Filter by material selection
+    # Filter by material selection (matches materialId or document name)
     candidate_chunks = [
         c for c in chunks
-        if not selected or c.get("materialId") in selected
+        if not selected
+        or str(c.get("materialId", "")).strip() in selected
+        or str(c.get("documentName", "")).strip().lower() in selected_lower
     ]
 
     if not candidate_chunks:

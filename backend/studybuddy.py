@@ -71,6 +71,18 @@ Guidelines:
 _SYSTEM_PROMPT_JSON = """You are EduRAG AI. Respond ONLY with a valid JSON array, starting with [ and ending with ]. No markdown, no code blocks, no explanations, no preamble, no postamble. Each object must have: question (string), options (array of exactly 4 strings), correct (0-3 index of correct option)."""
 
 
+import hashlib
+_RESPONSE_CACHE: dict[str, str] = {}
+_MAX_CACHE_SIZE = 500
+
+
+def _get_cache_key(question: str, context: str, topic: str, difficulty: str) -> str:
+    norm_q = re.sub(r"\s+", " ", (question or "").strip().lower())
+    norm_ctx = re.sub(r"\s+", " ", (context or "")[:200].strip().lower())
+    raw = f"{norm_q}::{norm_ctx}::{topic}::{difficulty}"
+    return hashlib.md5(raw.encode("utf-8")).hexdigest()
+
+
 class StudyBuddy:
 
     def __init__(self):
@@ -100,22 +112,19 @@ class StudyBuddy:
         else:
             print("[AI] openai package not installed; LLM features disabled.")
 
-    def ask(
+    def _build_prompts_and_messages(
         self,
-        name: str = "Student",
-        branch: str = "Computer Science",
-        sem: str = "5",
-        topic: str = "General",
-        difficulty: str = "Medium",
-        question: str | None = None,
-        context: str = "",
-        history: list[dict] | None = None,
-        max_tokens: int | None = None,
-        strict_context: bool = False,
-        temperature: float | None = None,
-    ) -> str:
+        name: str,
+        branch: str,
+        sem: str,
+        topic: str,
+        difficulty: str,
+        question: str | None,
+        context: str,
+        history: list[dict] | None,
+        strict_context: bool,
+    ) -> tuple[str, list[dict], bool, bool]:
         q = question or topic
-
         json_requested = bool(re.search(r'valid json array|output must be only a valid json|starting with \[', q, re.IGNORECASE))
         system_prompt = _SYSTEM_PROMPT_JSON if json_requested else _SYSTEM_PROMPT
 
@@ -137,8 +146,6 @@ Student's Question:
         )
 
         if json_requested:
-            # JSON-only mode: skip prose-style "Final-answer requirements" that
-            # would conflict with the strict "respond with ONLY JSON" system prompt.
             if strict_context:
                 user_prompt += """
 
@@ -166,7 +173,6 @@ Final-answer requirements:
 For this quiz, use only facts in the provided study-material context. Do not add facts that are not supported by those extracted document chunks."""
 
         messages: list[dict] = [{"role": "system", "content": system_prompt}]
-
         if history:
             for msg in history:
                 role = msg.get("role", "user")
@@ -179,23 +185,64 @@ For this quiz, use only facts in the provided study-material context. Do not add
                     messages.append({"role": "user", "content": content})
 
         messages.append({"role": "user", "content": user_prompt})
+        return q, messages, json_requested, is_notes_request
+
+    def _get_active_models(self) -> list[str]:
+        if not self.api_key:
+            return []
+        if self.api_key.startswith("sk-or-"):
+            configured_model = os.getenv("AI_MODEL", "qwen/qwen3.8-27b:free")
+            candidates = [
+                configured_model,
+                "qwen/qwen3.8-27b:free",
+                "inclusionai/ling-3.0-flash-sante:free",
+                "google/gemma-4-31b-it:free",
+            ]
+        else:
+            candidates = [os.getenv("AI_MODEL", "gpt-4o-mini"), "gpt-4o"]
+        
+        seen = set()
+        deduped = []
+        for m in candidates:
+            if m and m not in seen:
+                seen.add(m)
+                deduped.append(m)
+        return deduped
+
+    def ask(
+        self,
+        name: str = "Student",
+        branch: str = "Computer Science",
+        sem: str = "5",
+        topic: str = "General",
+        difficulty: str = "Medium",
+        question: str | None = None,
+        context: str = "",
+        history: list[dict] | None = None,
+        max_tokens: int | None = None,
+        strict_context: bool = False,
+        temperature: float | None = None,
+    ) -> str:
+        q, messages, json_requested, is_notes_request = self._build_prompts_and_messages(
+            name, branch, sem, topic, difficulty, question, context, history, strict_context
+        )
+
+        # Check response cache
+        cache_key = _get_cache_key(q, context, topic, difficulty)
+        if not json_requested and not is_notes_request and cache_key in _RESPONSE_CACHE:
+            return _RESPONSE_CACHE[cache_key]
+
+        # Fast curriculum knowledge base match if no context was passed
+        if not context and not is_notes_request and not json_requested:
+            kb_match = _match_knowledge_base(re.sub(r"\s+", " ", q.strip().lower()).rstrip("?.!"))
+            if kb_match:
+                _RESPONSE_CACHE[cache_key] = kb_match
+                return kb_match
 
         if self.client is not None and self.api_key:
-            if self.api_key.startswith("sk-or-"):
-                configured_model = os.getenv("AI_MODEL", "meta-llama/llama-3.2-3b-instruct:free")
-                models = [
-                    configured_model,
-                    "meta-llama/llama-3.2-3b-instruct:free",
-                    "meta-llama/llama-3.1-8b-instruct:free",
-                    "google/gemini-2.0-flash-exp:free",
-                    "qwen/qwen-2.5-72b-instruct:free",
-                    "mistralai/mistral-7b-instruct:free",
-                ]
-            else:
-                models = [os.getenv("AI_MODEL", "gpt-4o-mini"), "gpt-4o"]
-
-            # Use the fast local JSON fallback instead of waiting on a slow provider.
-            request_timeout = 12 if json_requested else 45
+            models = self._get_active_models()
+            request_timeout = 6 if json_requested else 6
+            tokens_to_gen = max_tokens or (900 if json_requested else 650)
 
             for model_name in models:
                 if not model_name:
@@ -205,16 +252,18 @@ For this quiz, use only facts in the provided study-material context. Do not add
                         model=model_name,
                         messages=messages,
                         temperature=temperature if temperature is not None else 0.25,
-                        max_tokens=max_tokens or (900 if json_requested else 2048),
+                        max_tokens=tokens_to_gen,
                         timeout=request_timeout,
                     )
                     if response.choices and response.choices[0].message.content:
                         content = response.choices[0].message.content.strip()
                         if json_requested:
-                            # Verify valid JSON block exists before returning
                             if "[" in content and "]" in content:
                                 return content
                         else:
+                            if len(_RESPONSE_CACHE) >= _MAX_CACHE_SIZE:
+                                _RESPONSE_CACHE.pop(next(iter(_RESPONSE_CACHE)))
+                            _RESPONSE_CACHE[cache_key] = content
                             return content
                 except Exception as exc:
                     print(f"[AI] Model {model_name} failed: {exc}")
@@ -225,7 +274,77 @@ For this quiz, use only facts in the provided study-material context. Do not add
         if is_notes_request:
             return ""
 
-        return self._local_answer(q)
+        fallback_ans = self._local_answer(q)
+        _RESPONSE_CACHE[cache_key] = fallback_ans
+        return fallback_ans
+
+    def ask_stream(
+        self,
+        name: str = "Student",
+        branch: str = "Computer Science",
+        sem: str = "5",
+        topic: str = "General",
+        difficulty: str = "Medium",
+        question: str | None = None,
+        context: str = "",
+        history: list[dict] | None = None,
+        max_tokens: int | None = None,
+        strict_context: bool = False,
+        temperature: float | None = None,
+    ):
+        q, messages, json_requested, is_notes_request = self._build_prompts_and_messages(
+            name, branch, sem, topic, difficulty, question, context, history, strict_context
+        )
+
+        cache_key = _get_cache_key(q, context, topic, difficulty)
+        if not json_requested and not is_notes_request and cache_key in _RESPONSE_CACHE:
+            yield _RESPONSE_CACHE[cache_key]
+            return
+
+        if not context and not is_notes_request and not json_requested:
+            kb_match = _match_knowledge_base(re.sub(r"\s+", " ", q.strip().lower()).rstrip("?.!"))
+            if kb_match:
+                _RESPONSE_CACHE[cache_key] = kb_match
+                yield kb_match
+                return
+
+        if self.client is not None and self.api_key:
+            models = self._get_active_models()
+            request_timeout = 6 if json_requested else 6
+            tokens_to_gen = max_tokens or (900 if json_requested else 650)
+
+            for model_name in models:
+                if not model_name:
+                    continue
+                try:
+                    stream = self.client.chat.completions.create(
+                        model=model_name,
+                        messages=messages,
+                        temperature=temperature if temperature is not None else 0.25,
+                        max_tokens=tokens_to_gen,
+                        timeout=request_timeout,
+                        stream=True,
+                    )
+                    assembled = []
+                    for chunk in stream:
+                        delta = chunk.choices[0].delta.content if chunk.choices and chunk.choices[0].delta else None
+                        if delta:
+                            assembled.append(delta)
+                            yield delta
+                    
+                    full_text = "".join(assembled).strip()
+                    if full_text:
+                        if len(_RESPONSE_CACHE) >= _MAX_CACHE_SIZE:
+                            _RESPONSE_CACHE.pop(next(iter(_RESPONSE_CACHE)))
+                        _RESPONSE_CACHE[cache_key] = full_text
+                        return
+                except Exception as exc:
+                    print(f"[AI Stream] Model {model_name} failed: {exc}")
+
+        # Fallback if streaming failed
+        fallback_ans = self._local_answer(q)
+        _RESPONSE_CACHE[cache_key] = fallback_ans
+        yield fallback_ans
 
     @staticmethod
     def _local_quiz_answer(topic: str = "General", context: str = "", difficulty: str = "Medium", count: int = 5, question_type: str = "MCQ") -> str:

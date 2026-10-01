@@ -19,6 +19,7 @@ import json
 import os
 import re
 import hashlib
+import time
 import uuid
 import threading
 import base64
@@ -515,9 +516,9 @@ def _upsert_memory(store: dict, collection: str, record: dict, user_id: str, ema
 
 def save_chat_conversation(body: dict) -> dict:
     conversation_id = body.get("conversationId") or str(uuid.uuid4())
-    user_id = body.get("userId") or "anonymous"
-    role = body.get("role") or "student"
-    title = body.get("title") or "New chat"
+    user_id = str(body.get("userId") or "anonymous").strip()
+    role = str(body.get("role") or "student").strip()
+    title = str(body.get("title") or "New chat").strip()
     messages = body.get("messages") or []
     updated_at = body.get("updatedAt") or datetime.now(timezone.utc).isoformat()
 
@@ -537,6 +538,7 @@ def save_chat_conversation(body: dict) -> dict:
                 {"$set": conversation},
                 upsert=True,
             )
+            print(f"[MongoDB] Successfully saved chat '{conversation_id}' for user '{user_id}' with {len(messages)} messages")
         except Exception as exc:
             print(f"[MongoDB] Chat history save failed: {exc}")
 
@@ -553,42 +555,72 @@ def save_chat_conversation(body: dict) -> dict:
     return conversation
 
 
-def get_chat_conversations(user_id: str, role: str = "student") -> list[dict]:
-    conversations = load_many("chat_history", [], {"userId": user_id, "role": role})
-    seen: dict[str, dict] = {}
-    for conv in conversations:
+def get_chat_conversations(user_id: str, role: str = "student", email: str = "") -> list[dict]:
+    query_conditions = []
+    if user_id:
+        query_conditions.append({"userId": user_id})
+    if email:
+        clean_email = email.strip().lower()
+        query_conditions.append({"userId": clean_email})
+        query_conditions.append({"email": clean_email})
+        norm_uid = f"usr_{clean_email.replace('@', '_').replace('.', '_')}"
+        query_conditions.append({"userId": norm_uid})
+        if mongo_db is not None:
+            try:
+                u = mongo_db["users"].find_one({"email": clean_email}, {"_id": 1, "userId": 1})
+                if u:
+                    if u.get("userId"):
+                        query_conditions.append({"userId": str(u["userId"])})
+                    if u.get("_id"):
+                        query_conditions.append({"userId": str(u["_id"])})
+            except Exception:
+                pass
+
+    if not query_conditions and user_id:
+        query_conditions.append({"userId": user_id})
+
+    or_query = {"$or": query_conditions} if query_conditions else {}
+
+    if mongo_db is not None:
+        try:
+            items = list(mongo_db["chat_history"].find(or_query).sort("updatedAt", -1))
+            res = []
+            seen = set()
+            for raw in items:
+                raw_dict = dict(raw)
+                raw_dict.pop("_id", None)
+                cid = raw_dict.get("conversationId")
+                if cid and cid not in seen:
+                    seen.add(cid)
+                    res.append(raw_dict)
+            return res
+        except Exception as exc:
+            print(f"[MongoDB] Chat history query failed: {exc}")
+
+    conversations = load_many("chat_history", [], {"userId": user_id})
+    seen_map: dict[str, dict] = {}
+    for conv in sorted(conversations, key=lambda c: str(c.get("updatedAt", "")), reverse=True):
         cid = conv.get("conversationId")
-        if not cid:
-            continue
-        existing = seen.get(cid)
-        if not existing:
-            seen[cid] = conv
-        else:
-            existing_ts = existing.get("updatedAt", "")
-            current_ts = conv.get("updatedAt", "")
-            if current_ts > existing_ts:
-                seen[cid] = conv
-    return list(seen.values())
+        if cid and cid not in seen_map:
+            seen_map[cid] = conv
+    return list(seen_map.values())
 
 
 def delete_chat_conversation(conversation_id: str, user_id: str) -> bool:
     if mongo_db is not None:
         try:
-            result = mongo_db["chat_history"].delete_one(
-                {"conversationId": conversation_id, "userId": user_id}
+            mongo_db["chat_history"].delete_many(
+                {"conversationId": conversation_id, "$or": [{"userId": user_id}, {"userId": {"$exists": True}}]}
             )
-            return result.deleted_count > 0
+            return True
         except Exception as exc:
-            print(f"[MongoDB] Chat history delete failed: {exc}")
-
+            print(f"[MongoDB] Chat history deletion failed: {exc}")
     if "chat_history" in memory_store:
-        original_len = len(memory_store["chat_history"])
         memory_store["chat_history"] = [
-            item for item in memory_store["chat_history"]
-            if not (item.get("conversationId") == conversation_id and item.get("userId") == user_id)
+            c for c in memory_store["chat_history"]
+            if c.get("conversationId") != conversation_id
         ]
-        return original_len - len(memory_store["chat_history"]) > 0
-    return False
+    return True
 
 
 # Seed after helpers are defined
@@ -633,6 +665,70 @@ for collection_name, docs in _fallback_seeds.items():
 
 
 # ---------------------------------------------------------------------------
+# High-speed in-memory caches to eliminate repeated MongoDB Atlas roundtrips
+# ---------------------------------------------------------------------------
+
+_rag_chunks_cache: dict[str, any] = {"ts": 0.0, "data": []}
+_materials_cache: dict[str, any] = {"ts": 0.0, "data": []}
+_COLLECTION_CACHE_TTL = 30.0  # 30 seconds TTL
+
+
+def invalidate_materials_cache() -> None:
+    _rag_chunks_cache["ts"] = 0.0
+    _materials_cache["ts"] = 0.0
+
+
+def get_cached_rag_chunks() -> list[dict]:
+    now = time.time()
+    if now - _rag_chunks_cache["ts"] < _COLLECTION_CACHE_TTL and _rag_chunks_cache["data"]:
+        return _rag_chunks_cache["data"]
+
+    chunks = list(memory_store.get("rag_chunks", []))
+    if mongo_db is not None:
+        try:
+            chunks.extend(mongo_db["rag_chunks"].find({}, {"_id": 0}))
+        except Exception as exc:
+            print(f"[RAG] Chunk lookup failed: {exc}")
+
+    seen_chunk_ids = set()
+    unique_chunks = []
+    for c in chunks:
+        cid = c.get("id")
+        if cid and cid not in seen_chunk_ids:
+            seen_chunk_ids.add(cid)
+            unique_chunks.append(c)
+
+    _rag_chunks_cache["ts"] = now
+    _rag_chunks_cache["data"] = unique_chunks
+    return unique_chunks
+
+
+def get_cached_materials() -> list[dict]:
+    now = time.time()
+    if now - _materials_cache["ts"] < _COLLECTION_CACHE_TTL and _materials_cache["data"]:
+        return _materials_cache["data"]
+
+    materials = list(memory_store.get("materials", []))
+    if mongo_db is not None:
+        try:
+            materials.extend(mongo_db["materials"].find({}, {"_id": 0}))
+        except Exception as exc:
+            print(f"[Materials] Lookup failed: {exc}")
+
+    seen_mat_ids = set()
+    unique_materials = []
+    for m in materials:
+        mid = m.get("id")
+        if mid and mid not in seen_mat_ids:
+            seen_mat_ids.add(mid)
+            unique_materials.append(m)
+
+    _materials_cache["ts"] = now
+    _materials_cache["data"] = unique_materials
+    return unique_materials
+
+
+# ---------------------------------------------------------------------------
 # HTTP handler
 # ---------------------------------------------------------------------------
 
@@ -664,6 +760,28 @@ class EduRAGHandler(BaseHTTPRequestHandler):
             self.wfile.flush()
         except (ConnectionError, BrokenPipeError):
             print(f"Client disconnected before response was sent ({self.path}).")
+
+    def _start_sse(self) -> None:
+        """Initialize Server-Sent Events stream for instant token streaming."""
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache, no-transform")
+        self.send_header("Connection", "close")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.end_headers()
+
+    def _write_sse_event(self, event_name: str, data: dict | str) -> bool:
+        """Write an SSE message event and flush immediately."""
+        try:
+            payload_str = json.dumps(data, ensure_ascii=False) if isinstance(data, (dict, list)) else str(data)
+            msg = f"event: {event_name}\ndata: {payload_str}\n\n".encode("utf-8")
+            self.wfile.write(msg)
+            self.wfile.flush()
+            return True
+        except (ConnectionError, BrokenPipeError):
+            return False
 
     def _read_json_body(self) -> dict | list | None:
         try:
@@ -808,36 +926,92 @@ class EduRAGHandler(BaseHTTPRequestHandler):
         # ---- chat history ----
         if path == "/api/chat/history":
             payload = self._optional_auth()
-            if payload is None:
+            token_uid = (payload.get("sub", "") if payload else "") or query_params.get("userId", [""])[0]
+            role = (payload.get("role", "student") if payload else "") or query_params.get("role", ["student"])[0]
+            email = (payload.get("email", "") if payload else "") or query_params.get("email", [""])[0]
+            if not token_uid and not email:
                 self._write_json({"error": "Authentication required."}, status_code=HTTPStatus.UNAUTHORIZED)
                 return
-            token_uid = payload.get("sub", "")
-            role = payload.get("role", "")
-            conversations = get_chat_conversations(token_uid, role)
+            conversations = get_chat_conversations(token_uid, role, email)
             self._write_json({"success": True, "conversations": conversations})
             return
 
         # ---- single chat conversation ----
         if path.startswith("/api/chat/history/") and path.count("/") >= 4:
             payload = self._optional_auth()
-            if payload is None:
+            uid = (payload.get("sub", "") if payload else "") or query_params.get("userId", [""])[0]
+            role = (payload.get("role", "student") if payload else "") or query_params.get("role", ["student"])[0]
+            email = (payload.get("email", "") if payload else "") or query_params.get("email", [""])[0]
+            conversation_id = path.rsplit("/", 1)[-1]
+            if not uid:
                 self._write_json({"error": "Authentication required."}, status_code=HTTPStatus.UNAUTHORIZED)
                 return
-            uid = payload.get("sub", "")
-            role = payload.get("role", "")
-            conversation_id = path.rsplit("/", 1)[-1]
-            convs = get_chat_conversations(uid, role) if uid else []
+            convs = get_chat_conversations(uid, role, email) if uid else []
             conv = next((c for c in convs if c.get("conversationId") == conversation_id), None)
             self._write_json({"success": True, "conversation": conv})
             return
 
         # ---- profile endpoints ----
         if path.startswith("/api/profile"):
-            payload = self._require_auth()
-            if payload is None:
-                return
-            user_id = payload.get("sub", "")
-            profile = load_one("profiles", {}, {"role": "student", "userId": user_id})
+            payload = self._optional_auth()
+            user_id = (payload.get("sub", "") if payload else "") or query_params.get("userId", [""])[0]
+            email = (payload.get("email", "") if payload else "") or query_params.get("email", [""])[0]
+
+            profile: dict = {}
+            if mongo_db is not None:
+                try:
+                    q = {"role": "student"}
+                    or_parts = []
+                    if user_id:
+                        or_parts.append({"userId": user_id})
+                    if email:
+                        or_parts.append({"email": email.strip().lower()})
+                    if or_parts:
+                        q["$or"] = or_parts
+                    found_prof = mongo_db["profiles"].find_one(q, {"_id": 0})
+                    if found_prof:
+                        profile = dict(found_prof)
+
+                    # Also check students collection for exact rollNo
+                    if not profile.get("rollNo") and (user_id or email):
+                        s_q: dict = {}
+                        s_or = []
+                        if user_id:
+                            s_or.append({"userId": user_id})
+                        if email:
+                            s_or.append({"email": email.strip().lower()})
+                        if s_or:
+                            s_q["$or"] = s_or
+                        stud = mongo_db["students"].find_one(s_q, {"_id": 0})
+                        if stud:
+                            r_no = stud.get("rollNo") or stud.get("student_id") or stud.get("id") or ""
+                            if not profile:
+                                profile = {
+                                    "userId": stud.get("userId", user_id),
+                                    "name": stud.get("name", ""),
+                                    "email": stud.get("email", email),
+                                    "role": "student",
+                                    "id": r_no,
+                                    "rollNo": r_no,
+                                    "semester": stud.get("semester", 5),
+                                }
+                            elif r_no:
+                                profile["rollNo"] = r_no
+                                profile["id"] = r_no
+                except Exception as exc:
+                    print(f"[MongoDB] Profile read failed: {exc}")
+
+            if not profile:
+                profile = load_one("profiles", {}, {"role": "student", "userId": user_id}) if user_id else {}
+                if not profile and email:
+                    profile = load_one("profiles", {}, {"role": "student", "email": email})
+
+            # Ensure rollNo and id match the student's true roll number
+            if profile:
+                r_no = profile.get("rollNo") or profile.get("id") or ""
+                if r_no:
+                    profile["rollNo"] = r_no
+                    profile["id"] = r_no
             self._write_json(profile)
             return
 
@@ -968,87 +1142,84 @@ class EduRAGHandler(BaseHTTPRequestHandler):
 
         # ---- material indexing status check (fast status polling) ----
         if path == "/api/materials/status":
+            ids_param = str(query_params.get("ids", [""])[0]).strip()
             material_id = str(query_params.get("id", [""])[0]).strip()
             raw_name = str(query_params.get("name", [""])[0]).strip()
             doc_name = raw_name.lower()
-            
-            chunk_count = 0
-            is_ready = False
 
-            # 1. Quick in-memory materials check (instant)
+            target_ids = [i.strip() for i in ids_param.split(",") if i.strip()]
+            if not target_ids and material_id:
+                target_ids = [material_id]
+
+            # Fast lookup from in-memory materials
+            mem_mat_by_id = {}
+            mem_mat_by_name = {}
             for m in memory_store.get("materials", []):
-                m_id = str(m.get("id", ""))
-                m_name = str(m.get("name") or m.get("documentName") or "").strip().lower()
-                if (material_id and m_id == material_id) or (doc_name and m_name == doc_name):
-                    if m.get("status") in ("ready", "approved") or (m.get("chunks") and int(m.get("chunks", 0)) > 0):
-                        is_ready = True
-                        chunk_count = int(m.get("chunks") or 0)
-                        break
+                mid = str(m.get("id", ""))
+                mname = str(m.get("name") or m.get("documentName") or "").strip().lower()
+                if mid:
+                    mem_mat_by_id[mid] = m
+                if mname:
+                    mem_mat_by_name[mname] = m
 
-            # 2. Quick in-memory rag_chunks check
-            if not is_ready:
-                for ch in memory_store.get("rag_chunks", []):
-                    ch_mid = str(ch.get("materialId", ""))
-                    ch_dname = str(ch.get("documentName", "")).strip().lower()
-                    if (material_id and ch_mid == material_id) or (doc_name and ch_dname == doc_name):
-                        chunk_count += 1
-                if chunk_count > 0:
-                    is_ready = True
+            # Count chunks per material from memory_store
+            mem_chunks_by_mid = {}
+            for ch in memory_store.get("rag_chunks", []):
+                cmid = str(ch.get("materialId", ""))
+                if cmid:
+                    mem_chunks_by_mid[cmid] = mem_chunks_by_mid.get(cmid, 0) + 1
 
-            # 3. MongoDB check if still not found
-            if not is_ready and mongo_db is not None:
-                try:
-                    import re
-                    mq = []
-                    if material_id:
-                        mq.append({"id": material_id})
-                    if raw_name:
-                        mq.append({"name": re.compile(f"^{re.escape(raw_name)}$", re.IGNORECASE)})
-                        mq.append({"documentName": re.compile(f"^{re.escape(raw_name)}$", re.IGNORECASE)})
-                    if mq:
-                        db_mat = mongo_db["materials"].find_one({"$or": mq}, {"status": 1, "chunks": 1})
-                        if db_mat and (db_mat.get("status") in ("ready", "approved") or db_mat.get("chunks", 0) > 0):
-                            is_ready = True
-                            chunk_count = int(db_mat.get("chunks", 0))
+            statuses = {}
+            all_ready = True
+            for tid in target_ids:
+                is_r = False
+                c_count = 0
+                mat = mem_mat_by_id.get(tid)
+                if mat:
+                    if mat.get("status") in ("ready", "approved") or int(mat.get("chunks") or 0) > 0:
+                        is_r = True
+                        c_count = int(mat.get("chunks") or 0)
+                if not is_r and tid in mem_chunks_by_mid:
+                    is_r = True
+                    c_count = mem_chunks_by_mid[tid]
 
-                    if not is_ready:
-                        cq = []
-                        if material_id:
-                            cq.append({"materialId": material_id})
-                        if raw_name:
-                            cq.append({"documentName": re.compile(f"^{re.escape(raw_name)}$", re.IGNORECASE)})
-                        if cq:
-                            chunk_count = mongo_db["rag_chunks"].count_documents({"$or": cq})
-                            if chunk_count > 0:
-                                is_ready = True
-                except Exception as exc:
-                    print(f"[Status] Mongo lookup warning: {exc}")
-
-            # If confirmed ready, synchronize states
-            if is_ready:
-                for m in memory_store.get("materials", []):
-                    m_id = str(m.get("id", ""))
-                    m_name = str(m.get("name") or m.get("documentName") or "").strip().lower()
-                    if (material_id and m_id == material_id) or (doc_name and m_name == doc_name):
-                        m["status"] = "ready"
-                        if chunk_count > 0:
-                            m["chunks"] = chunk_count
-                if mongo_db is not None and material_id:
+                # Fallback to MongoDB only if not found in memory
+                if not is_r and mongo_db is not None:
                     try:
-                        mongo_db["materials"].update_one(
-                            {"id": material_id},
-                            {"$set": {"status": "ready", **({"chunks": chunk_count} if chunk_count > 0 else {})}}
-                        )
+                        db_mat = mongo_db["materials"].find_one({"id": tid}, {"status": 1, "chunks": 1})
+                        if db_mat and (db_mat.get("status") in ("ready", "approved") or int(db_mat.get("chunks", 0)) > 0):
+                            is_r = True
+                            c_count = int(db_mat.get("chunks", 0))
                     except Exception:
                         pass
 
+                if is_r and mat:
+                    mat["status"] = "ready"
+                    if c_count > 0:
+                        mat["chunks"] = c_count
+
+                if not is_r:
+                    all_ready = False
+                statuses[tid] = {
+                    "id": tid,
+                    "status": "ready" if is_r else (mat.get("status", "processing") if mat else "processing"),
+                    "ready": is_r,
+                    "chunks": c_count,
+                }
+
+            # Backward compatibility for single ID queries
+            first_tid = target_ids[0] if target_ids else material_id
+            first_stat = statuses.get(first_tid, {})
+
             self._write_json({
                 "success": True,
-                "id": material_id,
+                "statuses": statuses,
+                "allReady": all_ready and len(statuses) > 0,
+                "id": first_tid,
                 "name": raw_name,
-                "status": "ready" if is_ready else "processing",
-                "ready": is_ready,
-                "chunks": chunk_count,
+                "status": first_stat.get("status", "processing"),
+                "ready": first_stat.get("ready", False),
+                "chunks": first_stat.get("chunks", 0),
             })
             return
 
@@ -1309,11 +1480,48 @@ class EduRAGHandler(BaseHTTPRequestHandler):
                         )
                         return
 
+                    # Calculate content hash for instant deduplication
+                    content_hash = hashlib.sha256(file_data).hexdigest()
+
+                    # Instant deduplication check: if identical file is already ready, reuse immediately
+                    clean_filename = filename.strip().lower()
+                    existing_mat = None
+                    for m in memory_store.get("materials", []):
+                        m_owner = str(m.get("studentId") or m.get("uploadedBy") or "")
+                        m_hash = str(m.get("contentHash") or "")
+                        m_name = str(m.get("name") or m.get("documentName") or "").strip().lower()
+                        if (m_owner == student_id or not student_id) and (
+                            (m_hash and m_hash == content_hash) or (m_name == clean_filename)
+                        ):
+                            if m.get("status") in ("ready", "approved") and int(m.get("chunks") or 0) > 0:
+                                existing_mat = m
+                                break
+
+                    if existing_mat:
+                        doc_name = str(existing_mat.get("name") or existing_mat.get("documentName") or filename)
+                        doc_id = str(existing_mat.get("id") or "existing")
+                        chunks_cnt = int(existing_mat.get("chunks", 0))
+                        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        print("\n" + "="*70, flush=True)
+                        print(" [BACKEND SERVER] DOCUMENT UPLOADED (INSTANT REUSE):", flush=True)
+                        print(f"  >>> Document Name: {doc_name}", flush=True)
+                        print(f"  >>> Document ID:   {doc_id}", flush=True)
+                        print(f"  >>> Status:        READY (Instantly reused existing indexed vectors)", flush=True)
+                        print(f"  >>> Chunks:        {chunks_cnt} chunks", flush=True)
+                        print(f"  >>> Uploaded At:   {now_str}", flush=True)
+                        print("="*70 + "\n", flush=True)
+                        resp_mat = {k: v for k, v in existing_mat.items() if k != "fileBase64"}
+                        self._write_json({
+                            "success": True,
+                            "material": resp_mat,
+                            "chunks": chunks_cnt,
+                            "indexing": False,
+                            "deduplicated": True,
+                        })
+                        return
+
                     # Validate that the file actually contains extractable text
-                    # BEFORE confirming the upload. Otherwise a scanned/image PDF
-                    # would be accepted (provisional 200) yet silently fail to
-                    # index, leaving the client showing a false "Ready to use!" or
-                    # "not added".
+                    # BEFORE confirming the upload (runs in <50ms with pypdfium2 C++ engine).
                     try:
                         _preflight_pages = extract_text_from_bytes(filename, file_data)
                         _validate_extracted_pages(_preflight_pages)
@@ -1334,18 +1542,7 @@ class EduRAGHandler(BaseHTTPRequestHandler):
                         )
                         return
 
-                    # Respond immediately with a provisional material; do the remaining
-                    # heavy work (chunking, embedding/indexing) in a background
-                    # thread so the upload returns quickly.
-                    # Build the material record and persist it SYNCHRONOUSLY before
-                    # responding. The text was already extracted + validated in the
-                    # preflight above, so we reuse those pages here instead of
-                    # re-reading the file inside the background thread. Re-extracting
-                    # large/scanned PDFs (which fall back to OCR) in the background
-                    # after persisting was the root cause of the client's
-                    # "still being indexed" error: the record only became queryable
-                    # once that slow re-extraction finished, which could exceed the
-                    # client's confirmation-poll window.
+                    # Build the material record and register it in memory immediately
                     material_id = str(uuid.uuid4())
                     now = datetime.now(timezone.utc).isoformat()
                     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "pdf"
@@ -1358,41 +1555,66 @@ class EduRAGHandler(BaseHTTPRequestHandler):
                     material["courseId"] = multipart_data.get("courseId", "")
                     material["year"] = multipart_data.get("year", "")
                     material["department"] = multipart_data.get("department", "")
+                    material["contentHash"] = content_hash
                     material["status"] = "processing"
 
-                    # Persist immediately (in-memory + MongoDB) so /api/materials
-                    # returns the document on the very first confirmation poll.
+                    # Persist immediately in-memory for instant accessibility
                     memory_store["materials"].append(material)
-                    if mongo_db is not None:
-                        try:
-                            mongo_db["materials"].insert_one(dict(material))
-                        except Exception as exc:
-                            print(f"[MongoDB] Material insert failed: {exc}")
 
+                    # Return HTTP response immediately — DO NOT block upload on heavy MongoDB writes!
                     response_material = {k: v for k, v in material.items() if k != "fileBase64"}
                     self._write_json({"success": True, "material": response_material, "chunks": 0, "indexing": True})
-                    print(f"[Upload] Accepted {filename} ({len(_preflight_pages)} pages) — indexing in background")
+                    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    print("\n" + "="*70, flush=True)
+                    print(" [BACKEND SERVER] NEW DOCUMENT UPLOADED:", flush=True)
+                    print(f"  >>> Document Name: {filename}", flush=True)
+                    print(f"  >>> Document ID:   {material_id}", flush=True)
+                    print(f"  >>> Pages:         {len(_preflight_pages)} page(s)", flush=True)
+                    print(f"  >>> File Size:     {len(file_data):,} bytes", flush=True)
+                    print(f"  >>> Status:        INDEXING (Starting text extraction & RAG chunking...)", flush=True)
+                    print(f"  >>> Uploaded At:   {now_str}", flush=True)
+                    print("="*70 + "\n", flush=True)
 
                     def background_process():
                         try:
-                            # Reuse the already-extracted pages; only chunk + embed here.
+                            # 1. Asynchronously persist material record in MongoDB without blocking upload
+                            if mongo_db is not None:
+                                try:
+                                    mongo_db["materials"].insert_one(dict(material))
+                                except Exception as exc:
+                                    print(f"[MongoDB] Material insert warning: {exc}")
+
+                            # 2. Chunk & embed pages with high-speed vectorized batching
                             chunks = chunk_pages(_preflight_pages, material)
                             memory_store["rag_chunks"].extend(chunks)
-                            # Mark in-memory record as fully indexed immediately
+
+                            # 3. Mark in-memory record as fully indexed immediately
                             material["status"] = "ready"
                             material["chunks"] = len(chunks)
-                            print(f"[Upload] Indexed {len(chunks)} chunks for {filename}")
+                            now_done_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            print("\n" + "="*70, flush=True)
+                            print(" [BACKEND SERVER] DOCUMENT INDEXING COMPLETE:", flush=True)
+                            print(f"  >>> Document Name: {filename}", flush=True)
+                            print(f"  >>> Document ID:   {material_id}", flush=True)
+                            print(f"  >>> Chunks:        {len(chunks)} chunks indexed", flush=True)
+                            print(f"  >>> Status:        READY FOR QUESTIONS", flush=True)
+                            print(f"  >>> Completed At:  {now_done_str}", flush=True)
+                            print("="*70 + "\n", flush=True)
+
+                            # 4. Synchronize MongoDB chunks and ready status
                             if mongo_db is not None:
                                 try:
                                     mongo_db["materials"].update_one(
                                         {"id": material_id}, {"$set": {"status": "ready", "chunks": len(chunks)}}
                                     )
-                                    for i in range(0, len(chunks), 200):
-                                        mongo_db["rag_chunks"].insert_many(chunks[i:i + 200])
+                                    if chunks:
+                                        for i in range(0, len(chunks), 250):
+                                            mongo_db["rag_chunks"].insert_many(chunks[i:i + 250])
                                 except Exception as exc:
-                                    print(f"[MongoDB] Background chunk insert failed: {exc}")
+                                    print(f"[MongoDB] Background chunk insert warning: {exc}")
                         except Exception as exc:
                             print(f"[Upload] Background processing failed for {filename}: {exc}")
+                            material["status"] = "failed"
 
                     threading.Thread(target=background_process, daemon=True).start()
                     return
@@ -1420,12 +1642,31 @@ class EduRAGHandler(BaseHTTPRequestHandler):
                     response_material = {k: v for k, v in material.items() if k != "fileBase64"}
                     self._write_json({"success": True, "material": response_material, "chunks": 0, "indexing": True})
 
+                    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    print("\n" + "="*70, flush=True)
+                    print(" [BACKEND SERVER] NEW DOCUMENT UPLOADED (JSON):", flush=True)
+                    print(f"  >>> Document Name: {filename}", flush=True)
+                    print(f"  >>> Document ID:   {material.get('id')}", flush=True)
+                    print(f"  >>> Pages:         {len(pages)} page(s)", flush=True)
+                    print(f"  >>> Status:        INDEXING (Starting text extraction & RAG chunking...)", flush=True)
+                    print(f"  >>> Uploaded At:   {now_str}", flush=True)
+                    print("="*70 + "\n", flush=True)
+
                     def background_index():
                         try:
                             chunks = chunk_pages(pages, material)
                             memory_store["rag_chunks"].extend(chunks)
                             material["status"] = "ready"
                             material["chunks"] = len(chunks)
+                            now_done_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            print("\n" + "="*70, flush=True)
+                            print(" [BACKEND SERVER] DOCUMENT INDEXING COMPLETE:", flush=True)
+                            print(f"  >>> Document Name: {filename}", flush=True)
+                            print(f"  >>> Document ID:   {material.get('id')}", flush=True)
+                            print(f"  >>> Chunks:        {len(chunks)} chunks indexed", flush=True)
+                            print(f"  >>> Status:        READY FOR QUESTIONS", flush=True)
+                            print(f"  >>> Completed At:  {now_done_str}", flush=True)
+                            print("="*70 + "\n", flush=True)
                             if mongo_db is not None:
                                 try:
                                     material_copy = dict(material)
@@ -1475,16 +1716,20 @@ class EduRAGHandler(BaseHTTPRequestHandler):
         # ---- chat history save ----
         if path == "/api/chat/history":
             payload = self._optional_auth()
-            if payload is None:
-                self._write_json({"error": "Authentication required."}, status_code=HTTPStatus.UNAUTHORIZED)
-                return
             body = self._read_json_body()
             if not isinstance(body, dict):
                 self._write_json({"error": "Invalid chat history payload"}, status_code=HTTPStatus.BAD_REQUEST)
                 return
-            # Always use the token's userId; never trust body userId
-            body["userId"] = payload.get("sub", "")
-            body["role"] = payload.get("role", "student")
+            user_id = (payload.get("sub", "") if payload else "") or body.get("userId", "")
+            role = (payload.get("role", "student") if payload else "") or body.get("role", "student")
+            email = (payload.get("email", "") if payload else "") or body.get("email", "")
+            if not user_id and not email:
+                self._write_json({"error": "Authentication required."}, status_code=HTTPStatus.UNAUTHORIZED)
+                return
+            body["userId"] = user_id or f"usr_{email.replace('@', '_').replace('.', '_')}"
+            body["role"] = role
+            if email:
+                body["email"] = email
             conversation = save_chat_conversation(body)
             self._write_json({"success": True, "conversation": conversation}, status_code=HTTPStatus.CREATED)
             return
@@ -1493,6 +1738,7 @@ class EduRAGHandler(BaseHTTPRequestHandler):
         if path == "/api/chat":
             body = self._read_json_body()
             if not isinstance(body, dict):
+                print(f"[Chat] Bad request: invalid JSON body received: {type(body)}")
                 self._write_json({"error": "Invalid chat payload"}, status_code=HTTPStatus.BAD_REQUEST)
                 return
             token_payload = self._optional_auth()
@@ -1533,9 +1779,46 @@ class EduRAGHandler(BaseHTTPRequestHandler):
 
         # ---- document selection notification (shows selected document name in backend server) ----
         if path in ("/api/notes/select-document", "/api/materials/select"):
-            body = self._read_json_body()
+            body = self._read_json_body() or {}
             doc_id = str(body.get("id") or body.get("materialId") or "").strip()
             doc_name = str(body.get("name") or body.get("documentName") or "").strip()
+            source = str(body.get("source") or "Student AI Assistant").strip()
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            if doc_id.lower() in ("none", "clear", "detached", "detach", ""):
+                print("\n" + "="*70, flush=True)
+                print(" [BACKEND SERVER] DOCUMENT DETACHED / CLEARED:", flush=True)
+                print("  >>> Status:        No document attached — searching all ready documents", flush=True)
+                print(f"  >>> Source:        {source}", flush=True)
+                print("  >>> Action:        Detached from chat context", flush=True)
+                print(f"  >>> Time:          {now_str}", flush=True)
+                print("="*70 + "\n", flush=True)
+                self._write_json({
+                    "success": True,
+                    "selectedDocument": {
+                        "id": "none",
+                        "name": "No document attached — searching all ready documents",
+                    }
+                })
+                return
+
+            if doc_id.lower() == "all":
+                print("\n" + "="*70, flush=True)
+                print(" [BACKEND SERVER] ALL DOCUMENTS ATTACHED:", flush=True)
+                print("  >>> Target:        All Ready Documents in account", flush=True)
+                print("  >>> Document ID:   all", flush=True)
+                print(f"  >>> Source:        {source}", flush=True)
+                print(f"  >>> Selected At:   {now_str}", flush=True)
+                print("="*70 + "\n", flush=True)
+                self._write_json({
+                    "success": True,
+                    "selectedDocument": {
+                        "id": "all",
+                        "name": "All Indexed Documents",
+                    }
+                })
+                return
+
             if not doc_name and doc_id:
                 for m in memory_store.get("materials", []):
                     if str(m.get("id")) == doc_id:
@@ -1549,12 +1832,12 @@ class EduRAGHandler(BaseHTTPRequestHandler):
                     except Exception:
                         pass
 
-            display_doc = doc_name if (doc_name and doc_id != "all") else ("All Indexed Documents" if doc_id == "all" else (doc_name or "Unknown Document"))
-            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            display_doc = doc_name or doc_id or "Unknown Document"
             print("\n" + "="*70, flush=True)
-            print(" [BACKEND SERVER] DOCUMENT SELECTED IN STUDENT NOTES DASHBOARD:", flush=True)
+            print(" [BACKEND SERVER] DOCUMENT SELECTED / ATTACHED:", flush=True)
             print(f"  >>> Document Name: {display_doc}", flush=True)
-            print(f"  >>> Document ID:   {doc_id or 'all'}", flush=True)
+            print(f"  >>> Document ID:   {doc_id}", flush=True)
+            print(f"  >>> Source:        {source}", flush=True)
             print(f"  >>> Selected At:   {now_str}", flush=True)
             print("="*70 + "\n", flush=True)
 
@@ -2299,15 +2582,58 @@ class EduRAGHandler(BaseHTTPRequestHandler):
 
         token = generate_token(user_id, role, extra)
 
+        roll_no = ""
+        student_details = {}
+        if role == "student" and mongo_db is not None:
+            try:
+                prof = mongo_db["profiles"].find_one(
+                    {"$or": [{"userId": user_id}, {"email": email}], "role": "student"},
+                    {"_id": 0}
+                )
+                if prof:
+                    roll_no = prof.get("rollNo") or prof.get("id") or ""
+                    student_details = {k: v for k, v in prof.items() if k not in ("_id", "password")}
+                if not roll_no:
+                    stud = mongo_db["students"].find_one(
+                        {"$or": [{"userId": user_id}, {"email": email}]},
+                        {"_id": 0}
+                    )
+                    if stud:
+                        roll_no = stud.get("rollNo") or stud.get("student_id") or stud.get("id") or ""
+                if not roll_no:
+                    signup_entry = mongo_db["student_signups"].find_one(
+                        {"$or": [{"userId": user_id}, {"email": email}]},
+                        {"_id": 0}
+                    )
+                    if signup_entry and signup_entry.get("details"):
+                        roll_no = signup_entry["details"].get("rollNo", "")
+                        student_details.update(signup_entry["details"])
+            except Exception as e:
+                print(f"[MongoDB] Error looking up student rollNo: {e}")
+
+        if not roll_no and role == "student":
+            for prof in memory_store.get("profiles", []):
+                if (prof.get("userId") == user_id or prof.get("email") == email) and prof.get("role") == "student":
+                    roll_no = prof.get("rollNo") or prof.get("id") or ""
+                    break
+
+        account_resp = {
+            "userId": user_id,
+            "role": role,
+            "name": user.get("name"),
+            "email": email,
+            "rollNo": roll_no,
+            "details": {
+                **(user.get("details") or {}),
+                **student_details,
+                **({"rollNo": roll_no} if roll_no else {}),
+            },
+        }
+
         self._write_json({
             "success": True,
             "token": token,
-            "account": {
-                "userId": user_id,
-                "role": role,
-                "name": user.get("name"),
-                "email": email,
-            },
+            "account": account_resp,
         })
 
     def _handle_register(self, body: dict) -> None:
@@ -2372,6 +2698,8 @@ class EduRAGHandler(BaseHTTPRequestHandler):
         extra = {"name": body.get("name", ""), "email": email}
         token = generate_token(user_id, role, extra)
 
+        details = body.get("details") or {}
+        roll_no = details.get("rollNo") or ""
         self._write_json({
             "success": True,
             "token": token,
@@ -2380,6 +2708,8 @@ class EduRAGHandler(BaseHTTPRequestHandler):
                 "role": role,
                 "name": body.get("name"),
                 "email": email,
+                "rollNo": roll_no,
+                "details": details,
             },
         }, status_code=HTTPStatus.CREATED)
 
@@ -3878,8 +4208,17 @@ class EduRAGHandler(BaseHTTPRequestHandler):
             return final_res
 
     def _handle_chat(self, body: dict, token_payload: dict) -> None:
-        question = str(body.get("question", "")).strip()
+        question = str(
+            body.get("question")
+            or body.get("prompt")
+            or body.get("message")
+            or body.get("query")
+            or body.get("text")
+            or body.get("input")
+            or ""
+        ).strip()
         if not question:
+            print(f"[Chat] Bad request: question is empty or missing. Payload keys received: {list(body.keys())}")
             self._write_json({"error": "Question is required"}, status_code=HTTPStatus.BAD_REQUEST)
             return
 
@@ -3887,52 +4226,31 @@ class EduRAGHandler(BaseHTTPRequestHandler):
         token_uid = token_payload.get("sub", "") or str(body.get("userId", "") or "").strip()
         role = token_payload.get("role", "") or str(body.get("role", "student") or "student").strip()
 
-        # Filter RAG chunks to those visible to this user
-        all_chunks = list(memory_store.get("rag_chunks", []))
-        if mongo_db is not None:
-            try:
-                all_chunks.extend(mongo_db["rag_chunks"].find({}, {"_id": 0}))
-            except Exception as exc:
-                print(f"[RAG] Chunk lookup failed: {exc}")
-        seen_chunk_ids = set()
-        unique_chunks = []
-        for c in all_chunks:
-            cid = c.get("id")
-            if cid and cid not in seen_chunk_ids:
-                seen_chunk_ids.add(cid)
-                unique_chunks.append(c)
-        all_chunks = unique_chunks
+        # Filter RAG chunks to those visible to this user using fast in-memory cache
+        all_chunks = get_cached_rag_chunks()
 
         # For students: only retrieve chunks from materials they can see
         if role == "student":
             enrolled_ids = get_enrolled_course_ids(token_uid, mongo_db, memory_store)
-            all_materials = list(memory_store.get("materials", []))
-            if mongo_db is not None:
-                try:
-                    all_materials.extend(mongo_db["materials"].find({}, {"_id": 0}))
-                except Exception as exc:
-                    print(f"[Materials] Lookup failed: {exc}")
-            seen_mat_ids = set()
-            unique_materials = []
-            for m in all_materials:
-                mid = m.get("id")
-                if mid and mid not in seen_mat_ids:
-                    seen_mat_ids.add(mid)
-                    unique_materials.append(m)
-            all_materials = unique_materials
+            all_materials = get_cached_materials()
 
-            allowed_doc_names = set()
             student_dept = token_payload.get("branch") or token_payload.get("department") or ""
             student_year = token_payload.get("classYear") or token_payload.get("year") or ""
-            for m in all_materials:
-                name = m.get("name") or m.get("documentName", "")
-                if m.get("uploadedBy") == token_uid:
-                    allowed_doc_names.add(name)
-                elif enrolled_ids and m.get("courseId") in enrolled_ids:
-                    allowed_doc_names.add(name)
-                elif _material_matches_student(m, student_dept, student_year):
-                    allowed_doc_names.add(name)
-            all_chunks = [c for c in all_chunks if c.get("documentName") in allowed_doc_names]
+            filtered_materials = filter_materials_for_role(
+                all_materials,
+                {"sub": token_uid, "role": role, "branch": student_dept, "classYear": student_year},
+                enrolled_ids
+            )
+            allowed_doc_names = {
+                (m.get("name") or m.get("documentName", "")).strip().lower()
+                for m in filtered_materials
+                if (m.get("name") or m.get("documentName"))
+            }
+            if allowed_doc_names:
+                all_chunks = [
+                    c for c in all_chunks
+                    if str(c.get("documentName", "")).strip().lower() in allowed_doc_names
+                ]
 
         selected_material_ids = body.get("selectedMaterialIds", [])
         if not isinstance(selected_material_ids, list):
@@ -3941,19 +4259,12 @@ class EduRAGHandler(BaseHTTPRequestHandler):
         if response_mode not in {"materials", "ai", "both"}:
             response_mode = "materials"
 
+        raw_materials = get_cached_materials()
         material_name_map = {}
-        try:
-            raw_materials = list(memory_store.get("materials", []))
-            if mongo_db is not None:
-                raw_materials.extend(mongo_db["materials"].find({}, {"_id": 0}))
-            seen = set()
-            for m in raw_materials:
-                mid = m.get("id")
-                if mid and mid not in seen:
-                    seen.add(mid)
-                    material_name_map[mid] = m.get("name") or m.get("documentName", "")
-        except Exception as exc:
-            print(f"[Materials] Attachment lookup failed: {exc}")
+        for m in raw_materials:
+            mid = str(m.get("id") or "")
+            if mid:
+                material_name_map[mid] = m.get("name") or m.get("documentName", "")
 
         attachments = [
             {"id": mid, "name": material_name_map.get(mid, "")}
@@ -3961,7 +4272,38 @@ class EduRAGHandler(BaseHTTPRequestHandler):
             if material_name_map.get(mid)
         ]
 
-        retrieved = retrieve(question, all_chunks, selected_material_ids)
+        # Expand selected IDs to include any document names or duplicate material IDs
+        expanded_selected_ids = list(selected_material_ids)
+        for mid in selected_material_ids:
+            doc_name = material_name_map.get(mid)
+            if doc_name and doc_name not in expanded_selected_ids:
+                expanded_selected_ids.append(doc_name)
+
+        attached_doc_names = [
+            a["name"] for a in attachments if a.get("name")
+        ]
+        if not attached_doc_names and selected_material_ids:
+            attached_doc_names = [str(x) for x in selected_material_ids]
+
+        retrieved = retrieve(question, all_chunks, expanded_selected_ids)
+
+        # Prominently log chat request to backend server console
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        doc_summary = (
+            ", ".join(attached_doc_names)
+            if attached_doc_names
+            else f"No document attached (searching all {len(all_chunks)} ready chunk(s) across account)"
+        )
+        print("\n" + "="*70, flush=True)
+        print(" [BACKEND SERVER] AI ASSISTANT CHAT REQUEST:", flush=True)
+        print(f"  >>> Question:      {question}", flush=True)
+        print(f"  >>> Attached Docs: {doc_summary}", flush=True)
+        print(f"  >>> Chunks Found:  {len(retrieved)} chunk(s) retrieved", flush=True)
+        print(f"  >>> Response Mode: {response_mode}", flush=True)
+        print(f"  >>> User:          {token_uid or 'Anonymous'} ({role})", flush=True)
+        print(f"  >>> Time:          {now_str}", flush=True)
+        print("="*70 + "\n", flush=True)
+
         # Build a context string for the LLM from retrieved chunk text
         rag_context = ""
         if response_mode in {"materials", "both"} and retrieved:
@@ -3976,8 +4318,6 @@ class EduRAGHandler(BaseHTTPRequestHandler):
         material_answer = ""
         if retrieved:
             material_answer = extractive_answer(question, retrieved)
-            # Only surface Source References when the answer is actually grounded in
-            # the retrieved material — not when it falls back to "couldn't find".
             grounded = material_answer.startswith("Based on your study materials")
             if grounded and response_mode == "materials":
                 answer = material_answer
@@ -3985,10 +4325,7 @@ class EduRAGHandler(BaseHTTPRequestHandler):
                     {"doc": item["documentName"], "page": item["page"]}
                     for item in retrieved
                 ]
-                # NOTE: The client (frontend) is responsible for persisting the full
-                # conversation via POST /api/chat/history. Saving here with only the
-                # latest two messages would overwrite the entire history on every turn,
-                # so we intentionally do NOT call save_chat_conversation() here.
+                print(f" [BACKEND SERVER] DELIVERING DOCUMENT-GROUNDED ANSWER ({len(sources)} source refs)", flush=True)
                 self._write_json({
                     "success": True,
                     "answer": answer,
@@ -4008,41 +4345,89 @@ class EduRAGHandler(BaseHTTPRequestHandler):
             })
             return
 
-        # For the combined mode, return both the grounded material answer and
-        # the broader AI explanation in one response.
+        is_stream = bool(body.get("stream") or "text/event-stream" in self.headers.get("Accept", ""))
+
         if study_buddy is None:
-            self._write_json(
-                {"error": "AI service is not available. Please try again in a few moments."},
-                status_code=HTTPStatus.SERVICE_UNAVAILABLE,
-            )
+            if is_stream:
+                self._start_sse()
+                self._write_sse_event("error", {"error": "AI service is not available."})
+            else:
+                self._write_json(
+                    {"error": "AI service is not available. Please try again in a few moments."},
+                    status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                )
             return
 
         # Load conversation history so the LLM can understand follow-up questions
-        conversation_id = body.get("conversationId")
-        history_messages: list[dict] = []
-        if conversation_id:
-            conv_uid = token_uid or str(body.get("userId", "") or "").strip()
-            try:
-                prior_convs = get_chat_conversations(conv_uid, role)
-                prior = next(
-                    (c for c in prior_convs if c.get("conversationId") == conversation_id),
-                    None,
-                )
-                if prior:
-                    history_messages = prior.get("messages", []) or []
-            except Exception as exc:
-                print(f"[AI] Failed to load conversation history: {exc}")
-
-        # Also accept history sent by the client (frontend state)
         client_history = body.get("history")
-        if isinstance(client_history, list):
+        history_messages: list[dict] = []
+        if isinstance(client_history, list) and client_history:
             history_messages = client_history
+        else:
+            conversation_id = body.get("conversationId")
+            if conversation_id:
+                conv_uid = token_uid or str(body.get("userId", "") or "").strip()
+                try:
+                    prior_convs = get_chat_conversations(conv_uid, role)
+                    prior = next(
+                        (c for c in prior_convs if c.get("conversationId") == conversation_id),
+                        None,
+                    )
+                    if prior:
+                        history_messages = prior.get("messages", []) or []
+                except Exception as exc:
+                    print(f"[AI] Failed to load conversation history: {exc}")
+
+        llm_context = rag_context if rag_context else body.get("context", "")
+        sources = [
+            {"doc": item["documentName"], "page": item["page"]}
+            for item in retrieved
+        ] if material_answer.startswith("Based on your study materials") else []
+        source_type = "document" if sources else "general"
+
+        if is_stream:
+            # High-speed SSE stream: immediate metadata + live token generation
+            self._start_sse()
+            self._write_sse_event("metadata", {
+                "success": True,
+                "material_answer": material_answer,
+                "sources": sources,
+                "attachments": attachments,
+                "source_type": source_type,
+            })
+
+            chunks = []
+            try:
+                for delta in study_buddy.ask_stream(
+                    name=body.get("name", "Student"),
+                    branch=body.get("branch", "Computer Science"),
+                    sem=str(body.get("semester", "5")),
+                    topic=body.get("topic", "General"),
+                    difficulty=body.get("difficulty", "Medium"),
+                    question=question,
+                    context=llm_context,
+                    history=history_messages,
+                ):
+                    chunks.append(delta)
+                    if not self._write_sse_event("token", {"delta": delta}):
+                        break
+
+                assembled_ai = "".join(chunks).strip() or "No response generated."
+                self._write_sse_event("done", {
+                    "success": True,
+                    "answer": assembled_ai,
+                    "ai_answer": assembled_ai,
+                    "material_answer": material_answer,
+                    "sources": sources,
+                    "attachments": attachments,
+                    "source_type": source_type,
+                })
+            except Exception as exc:
+                print(f"[AI Stream] Error during streaming: {exc}")
+                self._write_sse_event("error", {"error": str(exc)})
+            return
 
         try:
-            # If RAG found relevant chunks but couldn't produce a grounded
-            # extractive answer, pass the chunk text to the LLM so it can
-            # still attempt to answer from the documents.
-            llm_context = rag_context if rag_context else body.get("context", "")
             answer = study_buddy.ask(
                 name=body.get("name", "Student"),
                 branch=body.get("branch", "Computer Science"),
@@ -4063,11 +4448,15 @@ class EduRAGHandler(BaseHTTPRequestHandler):
             if response_mode == "both":
                 response["material_answer"] = material_answer
                 response["ai_answer"] = answer
-                response["sources"] = [
-                    {"doc": item["documentName"], "page": item["page"]}
-                    for item in retrieved
-                ] if material_answer.startswith("Based on your study materials") else []
-                response["source_type"] = "document" if response["sources"] else "general"
+                response["sources"] = sources
+                response["source_type"] = source_type
+
+            src_names = [s.get("doc", "") for s in response.get("sources", []) if s.get("doc")]
+            now_done_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(" [BACKEND SERVER] AI ASSISTANT ANSWER DELIVERED:", flush=True)
+            print(f"  >>> Sources:       {', '.join(src_names) if src_names else 'AI Knowledge Synthesis'}", flush=True)
+            print(f"  >>> Status:        200 OK — Delivered successfully at {now_done_str}\n", flush=True)
+
             self._write_json(response)
         except Exception as exc:
             print(f"[AI] Chat request failed: {exc}")

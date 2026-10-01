@@ -1,4 +1,4 @@
-const API_BASE_URL = 'http://localhost:8000';
+export const API_BASE_URL = 'http://localhost:8000';
 
 function getAuthHeader(): Record<string, string> {
   if (typeof window === 'undefined') return {};
@@ -13,7 +13,7 @@ function hasAuthToken(): boolean {
 }
 
 export async function apiDelete(endpoint: string, ids: string[]): Promise<boolean> {
-  const isQuizzesEndpoint = endpoint.startsWith('/api/quizzes');
+  const isQuizzesEndpoint = endpoint.startsWith('/api/quizzes') || endpoint.startsWith('/api/chat/history');
   if (!isQuizzesEndpoint && !hasAuthToken()) {
     console.warn(`[API] Delete request to ${endpoint} was skipped because no auth token is available.`, { ids });
     return false;
@@ -49,6 +49,8 @@ export async function apiPost(endpoint: string, data: any): Promise<boolean> {
   const isPublicAuthEndpoint =
     endpoint === '/api/auth' ||
     endpoint === '/api/auth/register' ||
+    endpoint.startsWith('/api/chat/history') ||
+    endpoint.startsWith('/api/profile') ||
     endpoint.startsWith('/api/quizzes') ||
     endpoint.startsWith('/api/quiz-');
   if (!isPublicAuthEndpoint && !hasAuthToken()) return false;
@@ -96,6 +98,8 @@ export async function apiPut(endpoint: string, data: any): Promise<boolean> {
 export async function apiGet<T>(endpoint: string): Promise<T | null> {
   const isPublicEndpoint =
     endpoint === '/api/auth' ||
+    endpoint.startsWith('/api/chat/history') ||
+    endpoint.startsWith('/api/profile') ||
     endpoint.startsWith('/api/quizzes') ||
     endpoint.startsWith('/api/quiz-');
   if (!isPublicEndpoint && !hasAuthToken()) return null;

@@ -181,61 +181,39 @@ h1, h2, h3, h4, h5 {
   box-shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 24px 48px -20px rgba(16, 24, 40, 0.22);
 }
 
-/* ===== Dark mode (class strategy) =====
-   Redefine the color tokens under .dark. In Tailwind v4 every utility
-   (bg-white, bg-white/80, from-white, text-neutral-900, borders, …) resolves
-   from these tokens, so redefining them flips the ENTIRE app at once — including
-   opacity variants and gradients — without touching component markup.
-   Palette: bg #0B1120 · cards #111827 · panels #172033 · text #F8FAFC ·
-   muted #94A3B8 · borders #273449 · primary #3B82F6 · hover #60A5FA · success #22C55E */
-.dark {
-  --color-white: #111827;          /* cards */
-  --color-black: #f8fafc;
-  --color-neutral-50: #0b1120;     /* app background */
-  --color-neutral-100: #172033;    /* secondary panels / raised surfaces */
-  --color-neutral-200: #273449;    /* borders / dividers */
-  --color-neutral-300: #334155;
-  --color-neutral-400: #64748b;    /* muted / placeholder */
-  --color-neutral-500: #94a3b8;    /* secondary text */
-  --color-neutral-600: #b8c2d0;
-  --color-neutral-700: #cbd5e1;
-  --color-neutral-800: #e2e8f0;
-  --color-neutral-900: #f8fafc;    /* primary text */
-  --color-neutral-950: #f8fafc;
+/* ===== Dark mode base & components ===== */
+html { color-scheme: light; }
+html.dark { color-scheme: dark; }
 
-  /* Primary — blue (lightened for dark surfaces) */
-  --color-primary-50: #172554;
-  --color-primary-100: #1e3a8a;
-  --color-primary-200: #1e40af;
-  --color-primary-300: #1d4ed8;
-  --color-primary-400: #60a5fa;
-  --color-primary-500: #3b82f6;
-  --color-primary-600: #3b82f6;
-  --color-primary-700: #60a5fa;
-  --color-primary-800: #93c5fd;
-  --color-primary-900: #bfdbfe;
-  --color-primary-950: #dbeafe;
-
-  /* Brand text stays readable on dark surfaces */
-  --color-secondary-600: #2ccbb4;
-  --color-secondary-700: #5be2cd;
-  --color-accent-600: #ffab20;
-  --color-accent-700: #ffc74a;
-
-  /* Success */
-  --color-success-500: #22c55e;
-  --color-success-600: #16a34a;
-  --color-success-700: #15803d;
+.dark body {
+  background-color: var(--color-neutral-950);
+  color: var(--color-neutral-100);
 }
 
 /* Custom (non-utility) dark treatments */
-.dark .glass { background: rgba(11, 17, 32, 0.72); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+.dark .glass {
+  background: rgba(11, 17, 32, 0.78);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
 .dark .card-shadow,
-.dark .card-shadow-lg { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 24px 48px -20px rgba(0, 0, 0, 0.6); }
+.dark .card-shadow-lg {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 24px 48px -20px rgba(0, 0, 0, 0.7);
+}
 
-/* Avoid a white flash before React applies the .dark class */
-html { color-scheme: light; }
-html.dark { color-scheme: dark; }
+.dark ::-webkit-scrollbar-thumb {
+  background: var(--color-neutral-700);
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: var(--color-neutral-600);
+}
+
+/* Native form controls in dark mode */
+.dark input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]):not([type="file"]),
+.dark select,
+.dark textarea {
+  color-scheme: dark;
+}
 
 /* Smooth, theme-aware transitions — but only after first paint so the saved
    theme never animates in on load (avoids a flash). */

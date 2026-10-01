@@ -7,6 +7,7 @@ import { Avatar } from '@/components/ui';
 import { navConfig, roleInfo, roleUser } from '@/config/nav';
 import type { Role } from '@/types';
 import { getCurrentAccount } from '@/lib/auth';
+import { useDashboard } from '@/context/DashboardContext';
 import { Sidebar } from './Sidebar';
 
 export default function DashboardShell({
@@ -22,12 +23,17 @@ export default function DashboardShell({
   onExit: () => void;
   children: React.ReactNode;
 }) {
+  const { isFullScreen, setIsFullScreen } = useDashboard();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>(
     () => (localStorage.getItem('edurag-theme') === 'dark' ? 'dark' : 'light'),
   );
+
+  useEffect(() => {
+    setIsFullScreen(false);
+  }, [activePage, setIsFullScreen]);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark');
@@ -50,14 +56,14 @@ export default function DashboardShell({
   const user = {
     name: activeAccount?.name ?? roleUser[role].name,
     email: activeAccount?.email ?? roleUser[role].email,
-    id: activeAccount?.details?.rollNo ?? roleUser[role].id,
+    id: activeAccount?.details?.rollNo || (activeAccount as any)?.rollNo || (role === 'student' ? 'Student' : ((roleUser as Record<string, any>)[role]?.id || '')),
   };
   const activeItem = nav.find((n) => n.id === activePage);
 
   return (
     <div className="min-h-screen bg-neutral-50 dark:bg-neutral-950 flex transition-colors">
       {/* Mobile overlay */}
-      {sidebarOpen && (
+      {!isFullScreen && sidebarOpen && (
         <div
           className="fixed inset-0 z-30 bg-slate-950/50 backdrop-blur-sm lg:hidden"
           onClick={() => setSidebarOpen(false)}
@@ -65,19 +71,22 @@ export default function DashboardShell({
       )}
 
       {/* Sidebar */}
-      <Sidebar
-        role={role}
-        activePage={activePage}
-        onPageChange={onPageChange}
-        onExit={onExit}
-        sidebarOpen={sidebarOpen}
-        setSidebarOpen={setSidebarOpen}
-      />
+      {!isFullScreen && (
+        <Sidebar
+          role={role}
+          activePage={activePage}
+          onPageChange={onPageChange}
+          onExit={onExit}
+          sidebarOpen={sidebarOpen}
+          setSidebarOpen={setSidebarOpen}
+        />
+      )}
 
       {/* Main */}
-      <div className="flex-1 lg:ml-72 min-w-0 flex flex-col">
+      <div className={cn('flex-1 min-w-0 flex flex-col transition-all duration-300', !isFullScreen && 'lg:ml-72')}>
         {/* Top bar */}
-        <header className="sticky top-0 z-20 h-16 glass border-b border-neutral-200 dark:border-white/10
+        {!isFullScreen && (
+          <header className="sticky top-0 z-20 h-16 glass border-b border-neutral-200 dark:border-white/10
                            bg-white/80 dark:bg-neutral-950/70
                            text-neutral-900 dark:text-neutral-100
                            flex items-center justify-between px-4 lg:px-8 gap-4 transition-colors">
@@ -189,10 +198,21 @@ export default function DashboardShell({
             </div>
           </div>
         </header>
+        )}
 
         {/* Page content */}
-        <main className="flex-1 p-4 lg:p-8 max-w-[1400px] w-full mx-auto" onClick={() => { setNotifOpen(false); setProfileOpen(false); }}>
-          <div className="animate-fade-in-up">{children}</div>
+        <main
+          className={cn(
+            'flex-1 w-full',
+            isFullScreen
+              ? 'p-0 max-w-none h-screen flex flex-col overflow-hidden'
+              : 'p-4 lg:p-8 max-w-[1400px] mx-auto'
+          )}
+          onClick={() => { setNotifOpen(false); setProfileOpen(false); }}
+        >
+          <div className={cn(isFullScreen ? 'flex-1 flex flex-col h-full w-full' : 'animate-fade-in-up')}>
+            {children}
+          </div>
         </main>
       </div>
     </div>

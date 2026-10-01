@@ -21,5 +21,5 @@ export const roleInfo: Record<Role, { name: string; subtitle: string; gradient: 
 };
 
 export const roleUser: Record<Role, { name: string; id: string; email: string; subtitle: string }> = {
-  student: { name: 'Aarav Sharma', id: 'STU-2024-0142', email: 'aarav.sharma@edurag.edu', subtitle: 'B.Tech CSE · 5th Semester' },
+  student: { name: 'Student', id: '', email: 'student@edurag.edu', subtitle: 'B.Tech CSE' },
 };

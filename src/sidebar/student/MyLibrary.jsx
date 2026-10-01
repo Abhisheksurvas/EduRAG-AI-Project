@@ -52,8 +52,8 @@ export default function MyLibrary() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold font-display text-neutral-900">My Library</h1>
-        <p className="text-neutral-500 text-sm mt-1">Read reference e-books, research documents, and uploaded course guides.</p>
+        <h1 className="text-3xl font-bold font-display text-neutral-900 dark:text-neutral-100">My Library</h1>
+        <p className="text-neutral-500 dark:text-neutral-400 text-sm mt-1">Read reference e-books, research documents, and uploaded course guides.</p>
       </div>
 
       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -74,16 +74,16 @@ export default function MyLibrary() {
               }
             />
             <CardBody className="space-y-4">
-              <div className="flex justify-between items-center text-xs text-neutral-500 font-semibold bg-neutral-50 p-2 rounded">
+              <div className="flex justify-between items-center text-xs text-neutral-500 dark:text-neutral-400 font-semibold bg-neutral-50 dark:bg-neutral-800/60 p-2 rounded">
                 <span>Format:</span>
-                <span className="text-primary-700">{book.file}</span>
+                <span className="text-primary-700 dark:text-primary-300">{book.file}</span>
               </div>
               <div className="flex gap-2">
                 <button
                   type="button"
                   onClick={() => openMaterial(book.id, true)}
                   disabled={!book.hasFile}
-                  className="flex-1 flex items-center justify-center gap-1 py-1.5 px-3 text-sm font-semibold border border-neutral-200 rounded-lg hover:bg-neutral-50 transition-all text-neutral-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex-1 flex items-center justify-center gap-1 py-1.5 px-3 text-sm font-semibold border border-neutral-200 dark:border-neutral-700 rounded-lg hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-all text-neutral-700 dark:text-neutral-200 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Eye className="h-4 w-4" /> Preview
                 </button>
@@ -92,7 +92,7 @@ export default function MyLibrary() {
                   onClick={() => openMaterial(book.id, false)}
                   disabled={!book.hasFile}
                   title="Download file"
-                  className="flex items-center justify-center p-1.5 border border-neutral-200 rounded-lg hover:bg-neutral-50 transition-all text-primary-600 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex items-center justify-center p-1.5 border border-neutral-200 dark:border-neutral-700 rounded-lg hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-all text-primary-600 dark:text-primary-400 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Download className="h-4.5 w-4.5" />
                 </button>

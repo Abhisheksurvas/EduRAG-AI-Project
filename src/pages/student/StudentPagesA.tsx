@@ -39,6 +39,8 @@ import {
   Paperclip,
   PanelLeftOpen,
   PanelLeftClose,
+  Maximize2,
+  Minimize2,
   X,
   LoaderCircle,
   XCircle,
@@ -61,6 +63,8 @@ import {
 } from '@/components/ui';
 
 import { cn } from '@/lib/utils';
+import { getCurrentAccount } from '@/lib/auth';
+import { useDashboard } from '@/context/DashboardContext';
 
 import { ChatHistorySidebar } from '@/components/ChatHistorySidebar';
 import { FormulaSheetRenderer, FormulaSectionCardsView, VisualMath, cleanLatexMath, parseFormulaSection, getFormulaSheetFormulas, type FormulaItem } from './FormulaSheetRenderer';
@@ -81,7 +85,6 @@ import {
   quizzes,
   assignments,
   chatHistory,
-  suggestedQuestions,
   recentActivity,
   aiUsageStats,
   generatedNotes,
@@ -1079,7 +1082,7 @@ export function StudentLibrary() {
 ========================================================= */
 
 /* =========================================================
-   AI STUDY ASSISTANT â€” ChatGPT-style UI
+   AI STUDY ASSISTANT — RAG Chat UI
    - Sidebar chat history with [+], [search], [close]
    - File upload -> compact file cards inside the chat
    - RAG answers grounded in the uploaded document content
@@ -1174,9 +1177,71 @@ function renderAnswerContent(content: string) {
   });
 }
 
+async function readSSEStream(
+  response: Response,
+  onMetadata: (data: any) => void,
+  onToken: (token: string) => void,
+  onDone: (data: any) => void,
+): Promise<void> {
+  if (!response.body) {
+    const data = await response.json();
+    onMetadata(data);
+    if (data.answer) onToken(data.answer);
+    onDone(data);
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split('\n\n');
+    buffer = events.pop() || '';
+
+    for (const evt of events) {
+      if (!evt.trim()) continue;
+      const lines = evt.split('\n');
+      let eventName = 'message';
+      let dataStr = '';
+
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          eventName = line.slice(7).trim();
+        } else if (line.startsWith('data: ')) {
+          dataStr = line.slice(6).trim();
+        }
+      }
+
+      if (!dataStr) continue;
+      try {
+        const parsed = JSON.parse(dataStr);
+        if (eventName === 'metadata') {
+          onMetadata(parsed);
+        } else if (eventName === 'token') {
+          if (parsed.delta) onToken(parsed.delta);
+        } else if (eventName === 'done') {
+          onDone(parsed);
+        } else if (eventName === 'error') {
+          throw new Error(parsed.error || 'AI streaming error');
+        }
+      } catch (err) {
+        if (err instanceof Error && err.message.includes('AI streaming error')) {
+          throw err;
+        }
+      }
+    }
+  }
+}
+
 export function StudentAIAssistant() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const { isFullScreen, setIsFullScreen } = useDashboard();
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -1185,6 +1250,8 @@ export function StudentAIAssistant() {
   const [editingMessageText, setEditingMessageText] = useState('');
   const [isThinking, setIsThinking] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
+  const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
+  const [loadingDocs, setLoadingDocs] = useState<boolean>(true);
   const [loadingConversations, setLoadingConversations] = useState(true);
   const [toasts, setToasts] = useState<ToastData[]>([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -1194,6 +1261,34 @@ export function StudentAIAssistant() {
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  useEffect(() => {
+    if (!isFullScreen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsFullScreen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isFullScreen, setIsFullScreen]);
+
+  useEffect(() => {
+    if (!sourcesOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setSourcesOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [sourcesOpen]);
+
+  useEffect(() => {
+    return () => {
+      setIsFullScreen(false);
+    };
+  }, [setIsFullScreen]);
+
   const pushToast = useCallback((message: string, tone: ToastData['tone']) => {
     const id = `t_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     setToasts(prev => [...prev, { id, message, tone }]);
@@ -1202,6 +1297,73 @@ export function StudentAIAssistant() {
   const dismissToast = useCallback((id: string) => {
     setToasts(prev => prev.filter(t => t.id !== id));
   }, []);
+
+  const loadStudentDocuments = useCallback(async () => {
+    try {
+      setLoadingDocs(true);
+      const token = typeof window !== 'undefined' ? window.localStorage.getItem('edurag-auth-token') : null;
+      const userId = getCurrentUserId();
+      const role = getCurrentUserRole();
+      const res = await fetch(`http://localhost:8000/api/materials?userId=${encodeURIComponent(userId)}&role=${encodeURIComponent(role)}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const list: any[] = Array.isArray(data) ? data : (data?.materials ?? []);
+
+      const docMap = new Map<string, UploadedFile>();
+      list.forEach((m: any) => {
+        const id = String(m.id || m._id || '').trim();
+        const rawName = String(m.name || m.documentName || m.filename || m.title || '').trim();
+        if (!id || !rawName) return;
+
+        const normName = rawName.toLowerCase();
+        const rawStatus = String(m.status || '').toLowerCase();
+        const isReady = rawStatus === 'ready' || rawStatus === 'approved' || rawStatus === 'indexed';
+        const status: 'ready' | 'indexing' | 'failed' = isReady ? 'ready' : (rawStatus === 'failed' ? 'failed' : 'indexing');
+
+        if (isReady || status === 'indexing') {
+          if (!docMap.has(normName) || (isReady && docMap.get(normName)?.status !== 'ready')) {
+            docMap.set(normName, {
+              id,
+              name: rawName,
+              size: Number(m.size) || 0,
+              type: m.type || getExt(rawName),
+              pages: Number(m.pages) || 1,
+              status,
+            });
+          }
+        }
+      });
+
+      const docs = Array.from(docMap.values());
+      setUploadedFiles(prev => {
+        // Retain any in-flight local uploads
+        const inFlight = prev.filter(p => p.status === 'indexing' && !docMap.has(p.name.toLowerCase()));
+        return [...docs, ...inFlight];
+      });
+
+      // Maintain existing selection without auto-selecting if empty
+      setSelectedDocIds(prev => {
+        if (prev.size > 0) {
+          const valid = new Set<string>();
+          for (const id of prev) {
+            if (docs.some(d => d.id === id)) valid.add(id);
+          }
+          if (valid.size > 0) return valid;
+        }
+        return new Set();
+      });
+    } catch (err) {
+      console.warn('[StudentAIAssistant] Failed to load documents:', err);
+    } finally {
+      setLoadingDocs(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadStudentDocuments();
+  }, [loadStudentDocuments]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1230,77 +1392,292 @@ export function StudentAIAssistant() {
     el.style.height = `${Math.min(el.scrollHeight, 128)}px`;
   }, [input]);
 
+  const currentSuggestions = useMemo(() => {
+    const readyDocs = uploadedFiles.filter(f => f.status === 'ready');
+    const activeSelectedDocs = readyDocs.filter(f => selectedDocIds.has(f.id));
+
+    // When document(s) are actively selected, strictly show suggestions for the selected document!
+    if (activeSelectedDocs.length > 0) {
+      const primaryDoc = activeSelectedDocs[0];
+      const primaryName = primaryDoc.name.replace(/\.[^/.]+$/, '').trim();
+      const lower = primaryDoc.name.toLowerCase();
+
+      if (lower.includes('aiml') || lower.includes('ai') || lower.includes('machine learning') || lower.includes('neural')) {
+        return {
+          label: `Suggested for ${primaryDoc.name}`,
+          questions: [
+            `What are the core machine learning concepts in "${primaryName}"?`,
+            `How does gradient descent and optimization work according to "${primaryName}"?`,
+            `Explain the model evaluation metrics discussed in "${primaryName}".`,
+            `What are the major algorithms and architectures covered in "${primaryName}"?`,
+            `Summarize the key takeaways and formulas from "${primaryName}".`,
+          ],
+        };
+      }
+
+      if (lower.includes('crypt') || lower.includes('network') || lower.includes('security') || lower.includes('cipher')) {
+        return {
+          label: `Suggested for ${primaryDoc.name}`,
+          questions: [
+            `Explain the key cryptographic algorithms and protocols in "${primaryName}".`,
+            `What are the main security vulnerabilities and defense models in "${primaryName}"?`,
+            `How do authentication and encryption mechanisms function in "${primaryName}"?`,
+            `What are the critical network protocols and layer standards in "${primaryName}"?`,
+            `Summarize the core security principles from "${primaryName}".`,
+          ],
+        };
+      }
+
+      if (lower.includes('dbms') || lower.includes('database') || lower.includes('sql')) {
+        return {
+          label: `Suggested for ${primaryDoc.name}`,
+          questions: [
+            `Explain the normalization rules and transaction ACID properties in "${primaryName}".`,
+            `How do indexing, B-trees, and query optimization work according to "${primaryName}"?`,
+            `What are the concurrency control and locking mechanisms described in "${primaryName}"?`,
+            `Summarize the relational schema designs and constraints in "${primaryName}".`,
+            `What are the top exam questions based on "${primaryName}"?`,
+          ],
+        };
+      }
+
+      if (lower.includes('graph') || lower.includes('tree') || lower.includes('dsa') || lower.includes('algorithm') || lower.includes('dijkstra')) {
+        return {
+          label: `Suggested for ${primaryDoc.name}`,
+          questions: [
+            `Summarize the algorithm time and space complexities in "${primaryName}".`,
+            `Explain the graph traversal and shortest-path techniques in "${primaryName}".`,
+            `How do tree structures and balancing operations work in "${primaryName}"?`,
+            `Compare the algorithm trade-offs and dynamic programming approaches in "${primaryName}".`,
+            `What are the top exam-oriented problems from "${primaryName}"?`,
+          ],
+        };
+      }
+
+      if (lower.includes('os') || lower.includes('operating')) {
+        return {
+          label: `Suggested for ${primaryDoc.name}`,
+          questions: [
+            `Explain process scheduling and synchronization mechanisms in "${primaryName}".`,
+            `How does virtual memory, paging, and page replacement work in "${primaryName}"?`,
+            `What are deadlock prevention and avoidance algorithms discussed in "${primaryName}"?`,
+            `Summarize file system architecture and I/O management in "${primaryName}".`,
+            `What are high-yield exam questions from "${primaryName}"?`,
+          ],
+        };
+      }
+
+      return {
+        label: `Suggested for ${primaryDoc.name}`,
+        questions: [
+          `Summarize the key topics and concepts covered in "${primaryName}".`,
+          `Explain the most important definitions, principles, and formulas in "${primaryName}".`,
+          `What are the high-probability exam questions from "${primaryName}"?`,
+          `Provide a clear step-by-step breakdown of the core sections in "${primaryName}".`,
+          `Give a quick revision summary and key takeaways of "${primaryName}".`,
+        ],
+      };
+    }
+
+    // When NO document is explicitly selected, but readyDocs exist:
+    if (readyDocs.length > 0) {
+      return {
+        label: `Suggested across ${readyDocs.length} ready document${readyDocs.length === 1 ? '' : 's'}`,
+        questions: [
+          `Summarize the common themes across all my uploaded documents.`,
+          `What are the key formulas and definitions across my course materials?`,
+          `What are the most important exam topics covered in my documents?`,
+          `Provide a comprehensive overview of my study materials.`,
+          `Compare the methodologies and concepts presented in my documents.`,
+        ],
+      };
+    }
+
+    return {
+      label: 'Popular Study Questions',
+      questions: [
+        'How do I effectively structure my exam revision using RAG?',
+        'What is the difference between supervised and unsupervised learning?',
+        'Explain time complexity and Big-O notation with examples.',
+        'What are ACID properties in relational database management?',
+        'Explain Dijkstra’s algorithm and shortest path concepts.',
+      ],
+    };
+  }, [uploadedFiles, selectedDocIds]);
+
   const send = useCallback(
     async (text: string) => {
       const trimmedText = text.trim();
       if (!trimmedText) return;
       if (isThinking) return;
 
-      const snapshotFiles = uploadedFiles;
+      const readyDocs = uploadedFiles.filter(f => f.status === 'ready');
+      const activeSelectedDocs = readyDocs.filter(f => selectedDocIds.has(f.id));
+      const hasExplicitSelection = activeSelectedDocs.length > 0;
+      const docsForRag = hasExplicitSelection ? activeSelectedDocs : readyDocs;
+
       const userMsg: ChatMessage = {
         id: `u${Date.now()}`,
         role: 'user',
         content: trimmedText,
         timestamp: new Date().toISOString(),
-        attachments: snapshotFiles.map(f => ({ id: f.id, name: f.name, status: f.status })),
+        attachments: hasExplicitSelection
+          ? activeSelectedDocs.map(f => ({ id: f.id, name: f.name, status: f.status }))
+          : [],
       };
 
       const nextMessages = [...messages, userMsg];
       setMessages(nextMessages);
       setInput('');
-      setUploadedFiles([]);
       setIsThinking(true);
+
+      const convId = activeConversationId || `chat-${Date.now()}`;
+      if (!activeConversationId) {
+        setActiveConversationId(convId);
+      }
+
+      // Optimistically show the current chat in the left history bar immediately!
+      const initialTitle = generateConversationTitle(nextMessages);
+      const initialConv: ChatConversation = {
+        conversationId: convId,
+        userId: getCurrentUserId(),
+        role: 'student',
+        title: initialTitle,
+        messages: nextMessages,
+        updatedAt: new Date().toISOString(),
+      };
+      setConversations(prev => [initialConv, ...prev.filter(c => c.conversationId !== convId)]);
+      saveConversation(initialConv).catch(console.warn);
+
+      const aiMsgId = `a${Date.now()}`;
+      let curMaterial = '';
+      let curAi = '';
+      let curSources: { doc: string; page: number; excerpt: string }[] = [];
+      let curSourceType: 'general' | 'document' = 'general';
+
+      const syncAiMessage = (
+        aiText: string,
+        matText: string,
+        srcs: { doc: string; page: number; excerpt: string }[],
+        srcType: 'general' | 'document',
+      ) => {
+        setMessages(prev => {
+          const idx = prev.findIndex(m => m.id === aiMsgId);
+          const item: ChatMessage = {
+            id: aiMsgId,
+            role: 'assistant',
+            timestamp: new Date().toISOString(),
+            content: aiText || (matText ? 'Refer to the extracted material citations above.' : ''),
+            materialAnswer: matText || undefined,
+            aiAnswer: aiText || undefined,
+            sources: srcs,
+            sourceType: srcType,
+            attachments: hasExplicitSelection
+              ? activeSelectedDocs.map(f => ({ id: f.id, name: f.name, status: f.status }))
+              : docsForRag.map(f => ({ id: f.id, name: f.name, status: f.status })),
+          };
+          if (idx >= 0) {
+            const arr = [...prev];
+            arr[idx] = item;
+            return arr;
+          }
+          return [...prev, item];
+        });
+      };
+
+      // Create initial placeholder card immediately for instant feedback
+      syncAiMessage('', '', [], 'general');
 
       try {
         const token = window.localStorage.getItem('edurag-auth-token');
         const controller = new AbortController();
-        const timeoutId = window.setTimeout(() => controller.abort(), 300_000);
+        const timeoutId = window.setTimeout(() => controller.abort(), 120_000);
+        const convId = activeConversationId || `chat-${Date.now()}`;
         const response = await fetch('http://localhost:8000/api/chat', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            'Accept': 'text/event-stream, application/json',
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
           signal: controller.signal,
           body: JSON.stringify({
             userId: getCurrentUserId(),
             role: getCurrentUserRole(),
-            conversationId: `chat-${Date.now()}`,
+            conversationId: convId,
             title: 'Chat',
             name: '',
             branch: '',
             semester: '',
             topic: 'General',
             difficulty: 'Medium',
-            question: prompt,
+            question: trimmedText,
             responseMode: 'both',
             context: '',
-            selectedMaterialIds: [],
+            selectedMaterialIds: docsForRag.map(f => f.id),
+            history: nextMessages.slice(-7, -1).map(m => ({
+              role: m.role,
+              content: m.content,
+            })),
+            stream: true,
           }),
         });
         window.clearTimeout(timeoutId);
-        const data = await response.json();
-        if (!response.ok || !data.success || !data.answer) {
-          throw new Error(data.error || 'The document search could not be completed.');
+
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('text/event-stream')) {
+          await readSSEStream(
+            response,
+            metadata => {
+              if (metadata.material_answer) curMaterial = metadata.material_answer;
+              if (Array.isArray(metadata.sources)) {
+                curSources = metadata.sources.map((s: any) => ({ ...s, excerpt: '' }));
+              }
+              if (metadata.source_type) curSourceType = metadata.source_type;
+              syncAiMessage(curAi, curMaterial, curSources, curSourceType);
+            },
+            tokenChunk => {
+              curAi += tokenChunk;
+              syncAiMessage(curAi, curMaterial, curSources, curSourceType);
+            },
+            doneData => {
+              if (doneData.ai_answer) curAi = doneData.ai_answer;
+              if (doneData.material_answer) curMaterial = doneData.material_answer;
+              if (Array.isArray(doneData.sources)) {
+                curSources = doneData.sources.map((s: any) => ({ ...s, excerpt: '' }));
+              }
+              if (doneData.source_type) curSourceType = doneData.source_type;
+              syncAiMessage(curAi, curMaterial, curSources, curSourceType);
+            },
+          );
+        } else {
+          const data = await response.json();
+          if (!response.ok || !data.success || !data.answer) {
+            throw new Error(data.error || 'The document search could not be completed.');
+          }
+          curAi = data.answer;
+          curMaterial = typeof data.material_answer === 'string' ? data.material_answer : '';
+          curSources = Array.isArray(data.sources) ? data.sources.map((s: any) => ({ ...s, excerpt: '' })) : [];
+          curSourceType = data.source_type === 'general' ? 'general' : 'document';
+          syncAiMessage(curAi, curMaterial, curSources, curSourceType);
         }
-        const aiMsg: ChatMessage = {
-          id: `a${Date.now()}`,
+
+        const finalAiMessage: ChatMessage = {
+          id: aiMsgId,
           role: 'assistant',
           timestamp: new Date().toISOString(),
-          content: data.answer,
-          materialAnswer: typeof data.material_answer === 'string' ? data.material_answer : undefined,
-          aiAnswer: typeof data.ai_answer === 'string' ? data.ai_answer : undefined,
-          sources: Array.isArray(data.sources)
-            ? data.sources.map((source: { doc: string; page: number }) => ({ ...source, excerpt: '' }))
-            : [],
-          sourceType: data.source_type === 'general' ? 'general' : 'document',
-          attachments: snapshotFiles.map(f => ({ id: f.id, name: f.name, status: f.status })),
+          content: curAi || (curMaterial ? 'Refer to the extracted material citations above.' : ''),
+          materialAnswer: curMaterial || undefined,
+          aiAnswer: curAi || undefined,
+          sources: curSources,
+          sourceType: curSourceType,
+          attachments: hasExplicitSelection
+            ? activeSelectedDocs.map(f => ({ id: f.id, name: f.name, status: f.status }))
+            : docsForRag.map(f => ({ id: f.id, name: f.name, status: f.status })),
         };
-        const updatedMessages = [...nextMessages, aiMsg];
-        setMessages(updatedMessages);
 
-        const title = generateConversationTitle(nextMessages);
-        const convId = activeConversationId || `conv_${Date.now()}`;
+        const updatedMessages = [...nextMessages, finalAiMessage];
+        const title = generateConversationTitle(updatedMessages);
         const conversation: ChatConversation = {
           conversationId: convId,
           userId: getCurrentUserId(),
@@ -1311,22 +1688,31 @@ export function StudentAIAssistant() {
         };
 
         saveConversation(conversation).then(() => {
-          loadConversations().then(setConversations);
+          setConversations(prev => [conversation, ...prev.filter(c => c.conversationId !== convId)]);
           setActiveConversationId(convId);
         });
       } catch (err) {
-        setMessages(prev => [...prev, {
-          id: `a${Date.now()}`,
-          role: 'assistant',
-          timestamp: new Date().toISOString(),
-          content: err instanceof Error ? err.message : 'I could not search your uploaded documents. Please try again.',
-          sources: [],
-        }]);
+        setMessages(prev => {
+          const idx = prev.findIndex(m => m.id === aiMsgId);
+          const errItem: ChatMessage = {
+            id: aiMsgId,
+            role: 'assistant',
+            timestamp: new Date().toISOString(),
+            content: err instanceof Error ? err.message : 'I could not search your uploaded documents. Please try again.',
+            sources: [],
+          };
+          if (idx >= 0) {
+            const arr = [...prev];
+            arr[idx] = errItem;
+            return arr;
+          }
+          return [...prev, errItem];
+        });
       } finally {
         setIsThinking(false);
       }
     },
-    [activeConversationId, isThinking, messages, uploadedFiles],
+    [activeConversationId, isThinking, messages, uploadedFiles, selectedDocIds],
   );
 
   const handleNewChat = useCallback(() => {
@@ -1353,11 +1739,14 @@ export function StudentAIAssistant() {
       e.target.value = '';
       setIsUploading(true);
       pushToast(
-        list.length === 1 ? `Uploading "${list[0].name}"…` : `Uploading ${list.length} files…`,
+        list.length === 1 ? `Uploading "${list[0].name}"…` : `Uploading ${list.length} files in parallel…`,
         'warning',
       );
 
-      const accepted: UploadedFile[] = [];
+      // Pre-screen files
+      const validFiles: { file: File; ext: string; pendingId: string }[] = [];
+      const pendingFilesToAdd: UploadedFile[] = [];
+
       for (const file of list) {
         const ext = getExt(file.name);
         if (!ACCEPTED_EXT.includes(ext)) {
@@ -1370,19 +1759,32 @@ export function StudentAIAssistant() {
         }
 
         const pendingId = `uploading_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-        const pendingFile: UploadedFile = {
+        validFiles.push({ file, ext, pendingId });
+        pendingFilesToAdd.push({
           id: pendingId,
           name: file.name,
           size: file.size,
           type: file.type || ext,
           pages: 1,
           status: 'indexing',
-        };
-        setUploadedFiles(prev => [
-          ...prev,
-          pendingFile,
-        ].slice(-MAX_FILES));
+        });
+      }
 
+      if (validFiles.length === 0) {
+        setIsUploading(false);
+        return;
+      }
+
+      // Add all pending placeholders at once
+      setUploadedFiles(prev => [...prev, ...pendingFilesToAdd]);
+      setSelectedDocIds(prev => {
+        const next = new Set(prev);
+        pendingFilesToAdd.forEach(p => next.add(p.id));
+        return next;
+      });
+
+      // Upload all valid files concurrently in parallel
+      const uploadPromises = validFiles.map(async ({ file, ext, pendingId }) => {
         try {
           const formData = new FormData();
           formData.append('file', file);
@@ -1409,10 +1811,16 @@ export function StudentAIAssistant() {
               pages: Number(data.material.pages) || 1,
               status: 'ready',
             };
-            accepted.push(uploadedFile);
             setUploadedFiles(prev => prev.map(item => item.id === pendingId ? uploadedFile : item));
-            pushToast(`"${file.name}" already indexed — reusing existing content.`, 'success');
-            continue;
+            setSelectedDocIds(prev => {
+              const next = new Set(prev);
+              next.delete(pendingId);
+              next.add(uploadedFile.id);
+              return next;
+            });
+            notifyDocumentSelected(uploadedFile.id, uploadedFile.name, 'Student AI Assistant Upload').catch(console.warn);
+            pushToast(`"${file.name}" already indexed — ready instantly!`, 'success');
+            return uploadedFile;
           }
 
           const uploadedFile: UploadedFile = {
@@ -1423,13 +1831,29 @@ export function StudentAIAssistant() {
             pages: Number(data.material.pages) || 1,
             status: data.material.status === 'ready' ? 'ready' : 'indexing',
           };
-          accepted.push(uploadedFile);
           setUploadedFiles(prev => prev.map(item => item.id === pendingId ? uploadedFile : item));
+          setSelectedDocIds(prev => {
+            const next = new Set(prev);
+            next.delete(pendingId);
+            next.add(uploadedFile.id);
+            return next;
+          });
+          notifyDocumentSelected(uploadedFile.id, uploadedFile.name, 'Student AI Assistant Upload').catch(console.warn);
+          return uploadedFile;
         } catch (err) {
           setUploadedFiles(prev => prev.filter(item => item.id !== pendingId));
+          setSelectedDocIds(prev => {
+            const next = new Set(prev);
+            next.delete(pendingId);
+            return next;
+          });
           pushToast(`Failed to upload "${file.name}". ${err instanceof Error ? err.message : ''}`, 'error');
+          return null;
         }
-      }
+      });
+
+      const results = await Promise.all(uploadPromises);
+      const accepted: UploadedFile[] = results.filter((f): f is UploadedFile => f !== null);
 
       if (accepted.length === 0) {
         setIsUploading(false);
@@ -1437,48 +1861,59 @@ export function StudentAIAssistant() {
       }
 
       if (accepted.length === 1) {
-        pushToast(`"${accepted[0].name}" attached successfully — indexing for RAG.`, 'success');
+        pushToast(`"${accepted[0].name}" attached — indexing for RAG…`, 'success');
       } else {
-        pushToast(`${accepted.length} files attached successfully — indexing for RAG.`, 'success');
+        pushToast(`${accepted.length} files attached — indexing for RAG…`, 'success');
       }
+
       const pendingIds = new Set(accepted.filter(file => file.status !== 'ready').map(file => file.id));
       let indexingComplete = true;
+
       if (pendingIds.size > 0) {
-        let indexedIds = new Set<string>();
-        const token = window.localStorage.getItem('edurag-auth-token');
+        const indexedIds = new Set<string>();
         const userId = getCurrentUserId();
-        for (let attempt = 0; attempt < 50 && indexedIds.size < pendingIds.size; attempt += 1) {
-          await new Promise(resolve => window.setTimeout(resolve, 200));
+
+        // High-speed adaptive polling: check after 50ms, 120ms, then 200ms
+        for (let attempt = 0; attempt < 40 && indexedIds.size < pendingIds.size; attempt += 1) {
+          const delay = attempt === 0 ? 50 : attempt < 5 ? 120 : 200;
+          await new Promise(resolve => window.setTimeout(resolve, delay));
           try {
-            // Use the optimized status endpoint for each pending file
-            let allReady = true;
-            for (const pendingId of pendingIds) {
-              if (indexedIds.has(pendingId)) continue;
-              const statusResponse = await fetch(
-                `http://localhost:8000/api/materials/status?id=${pendingId}&userId=${encodeURIComponent(userId)}&role=student`,
-              );
-              if (!statusResponse.ok) { allReady = false; continue; }
-              const statusData = await statusResponse.json();
-              if (statusData.status === 'ready') {
-                indexedIds.add(pendingId);
-              } else if (statusData.status === 'failed') {
-                setUploadedFiles(prev => prev.map(file =>
-                  file.id === pendingId ? { ...file, status: 'failed' } : file,
-                ));
-                allReady = false;
+            const unindexed = Array.from(pendingIds).filter(id => !indexedIds.has(id));
+            if (unindexed.length === 0) break;
+
+            const idsQuery = unindexed.join(',');
+            const statusResponse = await fetch(
+              `http://localhost:8000/api/materials/status?ids=${encodeURIComponent(idsQuery)}&userId=${encodeURIComponent(userId)}&role=student`,
+            );
+            if (!statusResponse.ok) continue;
+            const statusData = await statusResponse.json();
+
+            if (statusData.statuses && typeof statusData.statuses === 'object') {
+              for (const [mid, sInfo] of Object.entries<any>(statusData.statuses)) {
+                if (sInfo.status === 'ready' || sInfo.ready) {
+                  indexedIds.add(mid);
+                } else if (sInfo.status === 'failed') {
+                  setUploadedFiles(prev => prev.map(file =>
+                    file.id === mid ? { ...file, status: 'failed' } : file,
+                  ));
+                }
+              }
+            } else if (statusData.status === 'ready' || statusData.ready) {
+              if (unindexed.length === 1) {
+                indexedIds.add(unindexed[0]);
               }
             }
+
             if (indexedIds.size > 0) {
               setUploadedFiles(prev => prev.map(file =>
                 indexedIds.has(file.id) ? { ...file, status: 'ready' } : file,
               ));
             }
-            if (!allReady && indexedIds.size < pendingIds.size) {
-              // Not all ready yet, continue polling
-              continue;
+
+            if (indexedIds.size === pendingIds.size) {
+              break;
             }
           } catch {
-            // Continue polling on error
             continue;
           }
         }
@@ -1486,29 +1921,87 @@ export function StudentAIAssistant() {
         if (indexedIds.size === pendingIds.size) {
           pushToast(
             accepted.length === 1
-              ? `"${accepted[0].name}" indexed successfully and is ready for questions.`
-              : `${accepted.length} files indexed successfully and are ready for questions.`,
+              ? `"${accepted[0].name}" indexed successfully and is ready for questions!`
+              : `${accepted.length} files indexed successfully and are ready for questions!`,
             'success',
           );
+          void loadStudentDocuments();
         } else {
           indexingComplete = false;
-          pushToast('The document was uploaded, but indexing is still in progress. Send is enabled when indexing completes.', 'warning');
+          pushToast('The document was uploaded; indexing is finalizing in background.', 'warning');
         }
       }
+
       if (indexingComplete) {
         setIsUploading(false);
         textareaRef.current?.focus();
       }
     },
-    [pushToast],
+    [loadStudentDocuments, pushToast],
   );
 
   const removeUploadedFile = useCallback(
     (id: string) => {
       setUploadedFiles(prev => prev.filter(f => f.id !== id));
+      setSelectedDocIds(prev => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      notifyDocumentSelected('none', 'No document attached', 'Student AI Assistant').catch(console.warn);
     },
     [],
   );
+
+  const toggleDocSelection = useCallback((id: string) => {
+    setSelectedDocIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+        if (next.size === 0) {
+          notifyDocumentSelected('none', 'No document attached (searching all ready documents)', 'Student AI Assistant').catch(console.warn);
+        } else {
+          const remainingId = Array.from(next)[0];
+          const remainingDoc = uploadedFiles.find(f => f.id === remainingId);
+          notifyDocumentSelected(remainingId, remainingDoc?.name || remainingId, 'Student AI Assistant').catch(console.warn);
+        }
+      } else {
+        // If 1 document was already selected, switch to the new one; otherwise add
+        if (prev.size === 1) {
+          const targetDoc = uploadedFiles.find(f => f.id === id);
+          notifyDocumentSelected(id, targetDoc?.name || id, 'Student AI Assistant').catch(console.warn);
+          return new Set([id]);
+        }
+        next.add(id);
+        const targetDoc = uploadedFiles.find(f => f.id === id);
+        notifyDocumentSelected(id, targetDoc?.name || id, 'Student AI Assistant').catch(console.warn);
+      }
+      return next;
+    });
+  }, [uploadedFiles]);
+
+  const selectAllDocs = useCallback(() => {
+    const readyIds = uploadedFiles.filter(f => f.status === 'ready').map(f => f.id);
+    setSelectedDocIds(new Set(readyIds));
+    notifyDocumentSelected('all', 'All Ready Documents', 'Student AI Assistant').catch(console.warn);
+    pushToast('All ready documents attached to your next question.', 'success');
+  }, [uploadedFiles, pushToast]);
+
+  const clearDocSelection = useCallback(() => {
+    setSelectedDocIds(new Set());
+    notifyDocumentSelected('none', 'No document attached (searching all ready documents)', 'Student AI Assistant').catch(console.warn);
+    pushToast('Document detached. Next question will search across all documents.', 'warning');
+  }, [pushToast]);
+
+  const readyDocuments = useMemo(
+    () => uploadedFiles.filter(d => d.status === 'ready'),
+    [uploadedFiles],
+  );
+  const selectedDocuments = useMemo(
+    () => uploadedFiles.filter(d => selectedDocIds.has(d.id)),
+    [uploadedFiles, selectedDocIds],
+  );
+  const docCount = readyDocuments.length;
 
   const adjustTextareaHeight = useCallback(() => {
     const target = textareaRef.current;
@@ -1517,8 +2010,15 @@ export function StudentAIAssistant() {
     target.style.height = `${Math.min(target.scrollHeight, 128)}px`;
   }, []);
 
-  const userInitial = 'A';
-  const docCount = uploadedFiles.length;
+  const currentAccount = getCurrentAccount();
+  const userInitial = (currentAccount?.name || 'A').trim().charAt(0).toUpperCase() || 'A';
+
+  const handleConversationDeleted = useCallback((deletedId: string) => {
+    if (activeConversationId === deletedId) {
+      handleNewChat();
+    }
+    setConversations(prev => prev.filter(c => c.conversationId !== deletedId));
+  }, [activeConversationId, handleNewChat]);
   const copyQuestion = useCallback(async (question: string) => {
     try {
       await navigator.clipboard.writeText(question);
@@ -1668,34 +2168,45 @@ export function StudentAIAssistant() {
   }, [activeConversationId, editingMessageId, editingMessageText, messages]);
 
   return (
-    <div className="space-y-4">
-      <SectionHeader
-        title="AI Study Assistant"
-        description="ChatGPT-style RAG chat â€” upload your documents and ask anything about them."
-      />
+    <div className={cn('space-y-4', isFullScreen && 'space-y-0 h-full flex flex-col')}>
+      {!isFullScreen && (
+        <SectionHeader
+          title="AI Study Assistant"
+          description="AI-powered RAG chat — upload your documents and ask anything about them."
+        />
+      )}
 
-      <div className="flex h-[calc(100vh-10rem)] rounded-2xl overflow-hidden border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-sm relative">
+      <div
+        className={cn(
+          isFullScreen
+            ? 'flex-1 flex flex-row h-full w-full bg-white dark:bg-neutral-950 overflow-hidden m-0 p-0 rounded-none border-0'
+            : 'flex h-[calc(100vh-10rem)] rounded-2xl overflow-hidden border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 shadow-sm relative'
+        )}
+      >
         {/* Sidebar */}
         {sidebarOpen && (
           <ChatHistorySidebar
             activeConversationId={activeConversationId}
+            conversations={conversations}
+            onConversationsChange={setConversations}
             onSelectConversation={handleSelectConversation}
             onNewChat={handleNewChat}
             onClose={() => setSidebarOpen(false)}
-            className="w-72 bg-neutral-50 dark:bg-neutral-950 shrink-0"
+            onConversationDeleted={handleConversationDeleted}
+            className="w-72 bg-neutral-50 dark:bg-neutral-950 shrink-0 border-r border-neutral-200 dark:border-neutral-800"
           />
         )}
 
         {/* Main Chat Area */}
-        <div className="flex-1 flex flex-col min-w-0">
+        <div className="flex-1 flex flex-col min-w-0 h-full">
           {/* Top Navbar */}
-          <div className="h-14 border-b border-neutral-200 dark:border-neutral-800 flex items-center justify-between px-4 bg-white dark:bg-neutral-900 flex-shrink-0">
+          <div className="h-14 border-b border-neutral-200 dark:border-neutral-800 flex items-center justify-between px-4 bg-white dark:bg-neutral-950 flex-shrink-0">
             <div className="flex items-center gap-2 min-w-0">
               {!sidebarOpen && (
                 <button
                   onClick={() => setSidebarOpen(true)}
-                  className="grid h-9 w-9 shrink-0 place-items-center rounded-xl text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:hover:bg-neutral-800 dark:hover:text-neutral-100 transition-colors"
-                  title="Open sidebar"
+                  className="grid h-9 w-9 shrink-0 place-items-center rounded-xl text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:hover:bg-neutral-800 dark:hover:text-neutral-100 dark:text-neutral-400 transition-colors"
+                  title="Open chat history sidebar"
                 >
                   <PanelLeftOpen className="h-5 w-5" />
                 </button>
@@ -1705,10 +2216,13 @@ export function StudentAIAssistant() {
                   <BotIcon className="h-4 w-4" />
                 </div>
                 <div className="min-w-0">
-                  <h2 className="font-display font-semibold text-sm text-neutral-900 dark:text-neutral-100 truncate">EduRAG Assistant</h2>
+                  <div className="flex items-center gap-2">
+                    <h2 className="font-display font-semibold text-sm text-neutral-900 dark:text-neutral-100 truncate">EduRAG Assistant</h2>
+                  </div>
                   <p className="text-xs text-neutral-500 dark:text-neutral-400 flex items-center gap-1">
                     <span className="h-1.5 w-1.5 rounded-full bg-success-500 animate-pulse" />
-                    Online · {docCount} document{docCount === 1 ? '' : 's'} loaded
+                    Online · {readyDocuments.length} ready document{readyDocuments.length === 1 ? '' : 's'}
+                    {selectedDocuments.length > 0 ? ` (${selectedDocuments.length} selected for RAG)` : ''}
                   </p>
                 </div>
               </div>
@@ -1716,81 +2230,214 @@ export function StudentAIAssistant() {
 
             <div className="flex items-center gap-1">
               <button
-                onClick={() => setSourcesOpen(!sourcesOpen)}
+                onClick={() => {
+                  setSourcesOpen(v => {
+                    const next = !v;
+                    if (next) void loadStudentDocuments();
+                    return next;
+                  });
+                }}
                 className={cn(
-                  'grid h-9 w-9 shrink-0 place-items-center rounded-xl transition-colors',
+                  'relative grid h-9 w-9 shrink-0 place-items-center rounded-xl transition-colors',
                   sourcesOpen
                     ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
-                    : 'text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:hover:bg-neutral-800 dark:hover:text-neutral-100'
+                    : 'text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:hover:bg-neutral-800 dark:hover:text-neutral-100 dark:text-neutral-400'
                 )}
                 title="Uploaded documents"
               >
                 <FileText className="h-5 w-5" />
+                {selectedDocuments.length > 0 && (
+                  <span className="absolute -top-1 -right-1 flex h-4 min-w-4 px-1 items-center justify-center rounded-full bg-emerald-600 text-[10px] font-bold text-white shadow-sm">
+                    {selectedDocuments.length}
+                  </span>
+                )}
+              </button>
+
+              {/* Single Full Screen icon button right of select document */}
+              <button
+                onClick={() => setIsFullScreen(v => !v)}
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-xl text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:hover:bg-neutral-800 dark:hover:text-neutral-100 dark:text-neutral-400 transition-colors cursor-pointer"
+                title={isFullScreen ? 'Exit Full Screen' : 'Full Screen'}
+                aria-label={isFullScreen ? 'Exit Full Screen' : 'Full Screen'}
+              >
+                {isFullScreen ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
               </button>
 
               <button
                 onClick={() => setSidebarOpen(v => !v)}
-                className="grid h-9 w-9 shrink-0 place-items-center rounded-xl text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:hover:bg-neutral-800 dark:hover:text-neutral-100 transition-colors"
-                title={sidebarOpen ? 'Close sidebar' : 'Open sidebar'}
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-xl text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:hover:bg-neutral-800 dark:hover:text-neutral-100 dark:text-neutral-400 transition-colors"
+                title={sidebarOpen ? 'Close chat history sidebar' : 'Open chat history sidebar'}
               >
-                <PanelLeftClose className="h-5 w-5" />
+                {sidebarOpen ? <PanelLeftClose className="h-5 w-5" /> : <PanelLeftOpen className="h-5 w-5" />}
               </button>
             </div>
           </div>
 
           {/* Uploaded documents panel */}
           {sourcesOpen && (
-            <div className="absolute right-4 top-[5.5rem] w-80 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-lg z-20 overflow-hidden animate-fade-in-up">
-              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800 flex items-center justify-between">
+            <>
+              {/* Blank area click backdrop to close */}
+              <div
+                className="fixed inset-0 z-20 cursor-default bg-black/5 dark:bg-black/40"
+                onClick={() => setSourcesOpen(false)}
+                aria-label="Close document panel"
+              />
+              <div className="absolute right-4 top-[4.5rem] w-96 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 shadow-2xl z-30 overflow-hidden animate-fade-in-up">
+              <div className="px-4 py-3.5 border-b border-neutral-200 dark:border-neutral-800 flex items-center justify-between bg-neutral-50/80 dark:bg-neutral-950">
                 <div>
-                  <p className="font-display font-semibold text-sm text-neutral-900 dark:text-neutral-100">Uploaded Documents</p>
-                  <p className="text-xs text-neutral-500 dark:text-neutral-400">{docCount} loaded â€” used for RAG context</p>
-                </div>
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="text-xs px-2.5 py-1.5 rounded-lg bg-primary-600 text-white hover:bg-primary-700 transition-colors"
-                >
-                  + Add
-                </button>
-              </div>
-              <div className="p-2 space-y-1 max-h-72 overflow-y-auto">
-                {uploadedFiles.length === 0 && (
-                  <div className="px-3 py-6 text-center text-xs text-neutral-500 dark:text-neutral-400">
-                    No documents uploaded yet.
+                  <div className="flex items-center gap-2">
+                    <p className="font-display font-semibold text-sm text-neutral-900 dark:text-neutral-100">Uploaded Documents</p>
+                    <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/50 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                      {readyDocuments.length} READY
+                    </span>
                   </div>
-                )}
-                {uploadedFiles.map(f => {
-                  const kind = fileIconFor(f.name);
-                  return (
-                    <div
-                      key={f.id}
-                      className="flex items-center gap-2.5 p-2.5 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800/60"
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+                    {selectedDocuments.length === 0
+                      ? 'Select document(s) to attach to your next question'
+                      : `${selectedDocuments.length} of ${readyDocuments.length} attached to your next question`}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => void loadStudentDocuments()}
+                    className="p-1.5 rounded-lg text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+                    title="Refresh document list"
+                  >
+                    <RefreshCw className={cn("h-4 w-4", loadingDocs && "animate-spin")} />
+                  </button>
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="text-xs px-2.5 py-1.5 rounded-lg bg-primary-600 text-white hover:bg-primary-700 transition-colors font-medium flex items-center gap-1 shadow-sm"
+                  >
+                    <span>+ Add</span>
+                  </button>
+                  <button
+                    onClick={() => setSourcesOpen(false)}
+                    className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+                    title="Close"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Quick Select All / Clear Bar */}
+              {uploadedFiles.length > 1 && (
+                <div className="px-4 py-2 bg-neutral-50 dark:bg-neutral-900 border-b border-neutral-200/60 dark:border-neutral-800 flex items-center justify-between text-xs">
+                  <span className="text-neutral-500 dark:text-neutral-400">
+                    Click document to attach / detach
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={selectAllDocs}
+                      className="font-medium text-primary-600 dark:text-primary-400 hover:underline"
                     >
-                      <span className={cn('grid place-items-center h-8 w-8 rounded-lg border text-xs font-bold uppercase shrink-0', fileBadgeClass[kind])}>
-                        {kind === 'text' ? 'txt' : kind}
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-neutral-800 dark:text-neutral-200 truncate">{f.name}</p>
-                        <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                          {formatBytes(f.size)} · ~{f.pages} pages · {f.status === 'ready' ? 'Ready for RAG' : 'Indexing'}
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => removeUploadedFile(f.id)}
-                        className="text-neutral-400 hover:text-error-600 dark:hover:text-error-400 transition-colors"
-                        title="Remove"
+                      Attach All
+                    </button>
+                    <span className="text-neutral-300 dark:text-neutral-600">·</span>
+                    <button
+                      type="button"
+                      onClick={clearDocSelection}
+                      className="font-medium text-neutral-500 dark:text-neutral-400 hover:underline"
+                    >
+                      Detach All
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="p-3 space-y-2 max-h-80 overflow-y-auto">
+                {loadingDocs && uploadedFiles.length === 0 ? (
+                  <div className="px-3 py-8 flex flex-col items-center justify-center gap-2 text-center text-xs text-neutral-500 dark:text-neutral-400">
+                    <LoaderCircle className="h-5 w-5 animate-spin text-primary-500" />
+                    <span>Loading indexed documents…</span>
+                  </div>
+                ) : uploadedFiles.length === 0 ? (
+                  <div className="px-3 py-8 text-center text-xs text-neutral-500 dark:text-neutral-400">
+                    No documents uploaded yet. Click + Add to upload your study material.
+                  </div>
+                ) : (
+                  uploadedFiles.map(f => {
+                    const kind = fileIconFor(f.name);
+                    const isSelected = selectedDocIds.has(f.id);
+                    const isReady = f.status === 'ready';
+
+                    return (
+                      <div
+                        key={f.id}
+                        onClick={() => toggleDocSelection(f.id)}
+                        className={cn(
+                          'flex items-center gap-3 p-3 rounded-xl border transition-all cursor-pointer select-none',
+                          isSelected
+                            ? 'border-emerald-500 bg-emerald-50/80 dark:bg-emerald-950/40 dark:border-emerald-500/80 shadow-sm ring-1 ring-emerald-500/30'
+                            : 'border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 hover:border-neutral-300 dark:hover:border-neutral-700'
+                        )}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            toggleDocSelection(f.id);
+                          }
+                        }}
                       >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                  );
-                })}
+                        <span className={cn('grid place-items-center h-9 w-9 rounded-lg border text-xs font-bold uppercase shrink-0', fileBadgeClass[kind])}>
+                          {kind === 'text' ? 'txt' : kind}
+                        </span>
+
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 truncate" title={f.name}>
+                              {f.name}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2 mt-1">
+                            {isReady ? (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">
+                                <CheckCircle2 className="h-2.5 w-2.5 text-emerald-600 dark:text-emerald-400" />
+                                READY
+                              </span>
+                            ) : f.status === 'failed' ? (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-error-100 text-error-800 border border-error-300">
+                                FAILED
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-300">
+                                <LoaderCircle className="h-2.5 w-2.5 animate-spin text-amber-600" />
+                                INDEXING
+                              </span>
+                            )}
+                            <span className="text-[11px] text-neutral-500 dark:text-neutral-400 truncate">
+                              {f.size > 0 ? `${formatBytes(f.size)} · ` : ''}~{f.pages || 1} page{(f.pages || 1) === 1 ? '' : 's'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Selection status badge/button */}
+                        <div className="shrink-0 flex items-center gap-1.5">
+                          {isSelected ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 text-white text-xs font-semibold shadow-sm">
+                              <Check className="h-3.5 w-3.5" />
+                              Attached
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 text-xs font-medium bg-neutral-50 dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700">
+                              Attach
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
-          )}
+          </>
+        )}
 
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-5 bg-white dark:bg-neutral-900">
+          <div className="flex-1 overflow-y-auto p-4 space-y-5 bg-neutral-50/30 dark:bg-neutral-950">
             {messages.length === 0 && !isThinking ? (
               <div className="h-full flex flex-col items-center justify-center text-center px-4">
                 <div className="grid place-items-center h-16 w-16 rounded-2xl bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 mb-4 animate-floaty">
@@ -1798,22 +2445,30 @@ export function StudentAIAssistant() {
                 </div>
                 <h3 className="font-display font-semibold text-neutral-900 dark:text-neutral-100">How can I help you today?</h3>
                 <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1 max-w-sm">
-                  Upload a PDF / DOCX / PPTX / TXT file using the paperclip, then ask anything â€” answers are grounded in your documents with full source references.
+                  Upload a PDF / DOCX / PPTX / TXT file using the paperclip, then ask anything — answers are grounded in your documents with full source references.
                 </p>
 
-                <div className="mt-6 flex flex-wrap gap-2 justify-center">
-                  {suggestedQuestions.map(q => (
-                    <button
-                      key={q}
-                      onClick={() => {
-                        setInput(q);
-                        textareaRef.current?.focus();
-                      }}
-                      className="text-sm px-4 py-2 rounded-full border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
-                    >
-                      {q}
-                    </button>
-                  ))}
+                <div className="mt-6 w-full max-w-2xl">
+                  <div className="flex items-center justify-center gap-2 mb-3">
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-primary-50 dark:bg-primary-950/60 text-primary-700 dark:text-primary-300 border border-primary-200/60 dark:border-primary-800/60 shadow-xs">
+                      <Sparkles className="h-3.5 w-3.5 text-primary-600 dark:text-primary-400" />
+                      {currentSuggestions.label}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-2 justify-center">
+                    {currentSuggestions.questions.map(q => (
+                      <button
+                        key={q}
+                        onClick={() => {
+                          setInput(q);
+                          textareaRef.current?.focus();
+                        }}
+                        className="text-xs sm:text-sm px-3.5 py-2 rounded-xl border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 hover:border-primary-300 dark:hover:border-primary-700 hover:text-primary-700 dark:hover:text-primary-300 transition-all text-left shadow-xs"
+                      >
+                        {q}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
             ) : (
@@ -1839,72 +2494,88 @@ export function StudentAIAssistant() {
                         'max-w-[80%] rounded-2xl px-4 py-3 shadow-sm',
                         msg.role === 'user'
                           ? 'bg-primary-600 text-white'
-                          : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-100 border border-neutral-200/60 dark:border-neutral-700/60'
+                          : 'bg-neutral-100 dark:bg-neutral-900 text-neutral-800 dark:text-neutral-100 border border-neutral-200/60 dark:border-neutral-800'
                       )}
                     >
                       {/* Uploaded file cards inside the message */}
                       {msg.attachments && msg.attachments.length > 0 && (
-                        <div className="mb-2 flex flex-wrap gap-2">
-                          {msg.role === 'assistant' && (
-                            <span className="text-[10px] uppercase tracking-wide font-semibold text-neutral-500 dark:text-neutral-400 self-center mr-1">
-                              {msg.role === 'assistant' ? 'Used' : 'Attached'}:
-                            </span>
-                          )}
-                          {msg.attachments.map(att => {
-                            const kind = fileIconFor(att.name);
-                            return (
-                              <div
-                                key={att.id}
-                                className={cn(
-                                  'aisa-message-file-card text-left cursor-pointer hover:opacity-90 transition-opacity',
-                                  msg.role === 'user'
-                                    ? 'bg-white/15 border-white/30 text-white'
-                                    : fileBadgeClass[kind]
-                                )}
-                                onClick={() => openMaterialFile(att.id)}
-                                title={`Preview ${att.name}`}
-                                role="button"
-                                tabIndex={0}
-                                onKeyDown={(event) => {
-                                  if (event.key === 'Enter' || event.key === ' ') {
-                                    event.preventDefault();
-                                    openMaterialFile(att.id);
-                                  }
-                                }}
-                              >
-                                {kind === 'pdf' ? (
-                                  <FileText className="h-3.5 w-3.5 shrink-0" />
-                                ) : (
-                                  <span className="text-[10px] font-extrabold uppercase">{kind === 'text' ? 'TXT' : kind}</span>
-                                )}
-                                <span className="truncate max-w-[10rem]">{att.name}</span>
-                                {att.status && (
-                                  <span className={cn(
-                                    'shrink-0 px-1.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide',
-                                    'bg-black/5 dark:bg-white/10'
-                                  )}>
-                                    {att.status === 'ready' ? 'Ready' : 'Indexing'}
-                                  </span>
-                                )}
-                                {msg.role === 'assistant' && uploadedFiles.some(file => file.id === att.id) && (
-                                  <button
-                                    type="button"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      removeUploadedFile(att.id);
-                                    }}
-                                    className={cn(
-                                      'aisa-message-file-remove'
-                                    )}
-                                    title={`Remove ${att.name}`}
-                                    aria-label={`Remove ${att.name}`}
-                                  >
-                                    <X className="h-3.5 w-3.5" />
-                                  </button>
-                                )}
+                        <div className="mb-2.5">
+                          {msg.role === 'user' ? (
+                            <div className="space-y-1.5">
+                              <div className="flex items-center gap-1.5 text-[11px] font-semibold text-white/95">
+                                <Paperclip className="h-3.5 w-3.5 text-white/90" />
+                                <span>Attached to this question ({msg.attachments.length}):</span>
                               </div>
-                            );
-                          })}
+                              <div className="flex flex-wrap gap-2">
+                                {msg.attachments.map(att => {
+                                  const kind = fileIconFor(att.name);
+                                  return (
+                                    <div
+                                      key={att.id}
+                                      className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-xl bg-white/20 hover:bg-white/30 border border-white/40 text-white text-xs font-medium cursor-pointer transition-all shadow-sm"
+                                      onClick={() => openMaterialFile(att.id)}
+                                      title={`Preview ${att.name}`}
+                                      role="button"
+                                      tabIndex={0}
+                                      onKeyDown={(event) => {
+                                        if (event.key === 'Enter' || event.key === ' ') {
+                                          event.preventDefault();
+                                          openMaterialFile(att.id);
+                                        }
+                                      }}
+                                    >
+                                      <span className="grid place-items-center h-5 w-5 rounded-md bg-white/25 text-white text-[10px] font-extrabold uppercase shrink-0">
+                                        {kind === 'pdf' ? <FileText className="h-3 w-3" /> : (kind === 'text' ? 'TXT' : kind.toUpperCase())}
+                                      </span>
+                                      <span className="truncate max-w-[12rem] font-semibold">{att.name}</span>
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500 text-white shrink-0 shadow-2xs">
+                                        <CheckCircle2 className="h-2.5 w-2.5" />
+                                        READY
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex flex-wrap gap-2 items-center">
+                              <span className="text-[10px] uppercase tracking-wide font-semibold text-neutral-500 dark:text-neutral-400 self-center mr-1">
+                                Used:
+                              </span>
+                              {msg.attachments.map(att => {
+                                const kind = fileIconFor(att.name);
+                                return (
+                                  <div
+                                    key={att.id}
+                                    className={cn(
+                                      'aisa-message-file-card text-left cursor-pointer hover:opacity-90 transition-opacity',
+                                      fileBadgeClass[kind]
+                                    )}
+                                    onClick={() => openMaterialFile(att.id)}
+                                    title={`Preview ${att.name}`}
+                                    role="button"
+                                    tabIndex={0}
+                                    onKeyDown={(event) => {
+                                      if (event.key === 'Enter' || event.key === ' ') {
+                                        event.preventDefault();
+                                        openMaterialFile(att.id);
+                                      }
+                                    }}
+                                  >
+                                    {kind === 'pdf' ? (
+                                      <FileText className="h-3.5 w-3.5 shrink-0" />
+                                    ) : (
+                                      <span className="text-[10px] font-extrabold uppercase">{kind === 'text' ? 'TXT' : kind}</span>
+                                    )}
+                                    <span className="truncate max-w-[10rem]">{att.name}</span>
+                                    <span className="shrink-0 px-1.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300">
+                                      READY
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
                       )}
 
@@ -1920,7 +2591,18 @@ export function StudentAIAssistant() {
                             <p className="aisa-answer-muted">
                               Answer strictly from the uploaded document.
                             </p>
-                            <div>{renderAnswerContent(msg.materialAnswer || 'No document-based answer was available for this question.')}</div>
+                            <div>
+                              {msg.materialAnswer ? (
+                                renderAnswerContent(msg.materialAnswer)
+                              ) : isThinking && msg.id === messages[messages.length - 1]?.id ? (
+                                <div className="flex items-center gap-2 py-2 text-xs text-neutral-500 dark:text-neutral-400">
+                                  <LoaderCircle className="h-3.5 w-3.5 animate-spin text-primary-500" />
+                                  <span>Searching document context...</span>
+                                </div>
+                              ) : (
+                                renderAnswerContent('No document-based answer was available for this question.')
+                              )}
+                            </div>
                           </section>
 
                           <section className="aisa-answer-section aisa-answer-section--ai">
@@ -1933,7 +2615,23 @@ export function StudentAIAssistant() {
                             <p className="aisa-answer-muted">
                               Complete answer using general AI knowledge, beyond the uploaded document when necessary.
                             </p>
-                            <div>{renderAnswerContent(msg.aiAnswer || msg.content)}</div>
+                            <div>
+                              {msg.aiAnswer || msg.content ? (
+                                <>
+                                  {renderAnswerContent(msg.aiAnswer || msg.content)}
+                                  {isThinking && msg.id === messages[messages.length - 1]?.id && (
+                                    <span className="inline-block h-3.5 w-1.5 ml-1 bg-primary-500 animate-pulse align-middle rounded-xs" />
+                                  )}
+                                </>
+                              ) : isThinking && msg.id === messages[messages.length - 1]?.id ? (
+                                <div className="flex items-center gap-2 py-2 text-xs text-neutral-500 dark:text-neutral-400">
+                                  <LoaderCircle className="h-3.5 w-3.5 animate-spin text-primary-500" />
+                                  <span>Generating complete AI response...</span>
+                                </div>
+                              ) : (
+                                renderAnswerContent('No response generated.')
+                              )}
+                            </div>
                           </section>
                         </div>
                       ) : (
@@ -2065,12 +2763,12 @@ export function StudentAIAssistant() {
                 ))}
 
                 {/* Thinking indicator */}
-                {isThinking && (
+                {isThinking && messages[messages.length - 1]?.role !== 'assistant' && (
                   <div className="flex gap-3 animate-fade-in">
                     <div className="grid place-items-center h-8 w-8 rounded-lg bg-gradient-to-br from-primary-500 to-primary-700 text-white shadow-md shadow-primary-500/30">
                       <BotIcon className="h-4 w-4" />
                     </div>
-                    <div className="bg-neutral-100 dark:bg-neutral-800 rounded-2xl px-4 py-3 flex items-center gap-1.5 border border-neutral-200 dark:border-neutral-700">
+                    <div className="bg-neutral-100 dark:bg-neutral-900 rounded-2xl px-4 py-3 flex items-center gap-1.5 border border-neutral-200 dark:border-neutral-800">
                       {[0, 1, 2].map(i => (
                         <span
                           key={i}
@@ -2086,67 +2784,112 @@ export function StudentAIAssistant() {
             )}
           </div>
 
-          {/* Suggested questions â€” populate input */}
-          {messages.length <= 2 && !isThinking && messages.length > 0 && (
-            <div className="px-4 pb-2 flex flex-wrap gap-2 bg-white dark:bg-neutral-900">
-              {suggestedQuestions.map(q => (
-                <button
-                  key={q}
-                  onClick={() => {
-                    setInput(q);
-                    textareaRef.current?.focus();
-                  }}
-                  className="text-xs px-3 py-1.5 rounded-full bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-700 transition-colors"
-                >
-                  {q}
-                </button>
-              ))}
+          {/* Suggested questions — populate input */}
+          {messages.length <= 3 && !isThinking && messages.length > 0 && (
+            <div className="px-4 pb-2 bg-neutral-50/30 dark:bg-neutral-950">
+              <div className="flex items-center gap-1.5 mb-1.5 text-xs text-neutral-500 dark:text-neutral-400">
+                <Sparkles className="h-3 w-3 text-primary-600 dark:text-primary-400" />
+                <span className="font-semibold text-[11px]">{currentSuggestions.label}:</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {currentSuggestions.questions.map(q => (
+                  <button
+                    key={q}
+                    onClick={() => {
+                      setInput(q);
+                      textareaRef.current?.focus();
+                    }}
+                    className="text-xs px-3 py-1.5 rounded-full bg-neutral-100 dark:bg-neutral-900 text-neutral-700 dark:text-neutral-200 border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-200/60 dark:hover:bg-neutral-800 hover:text-primary-600 dark:hover:text-primary-300 transition-colors"
+                  >
+                    {q}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
           {/* Composer */}
           <div className="aisa-composer-wrap">
-            {uploadedFiles.length > 0 && (
-              <div className="aisa-attachment-preview" aria-live="polite" aria-label="Files attached to the next question">
-                <p className="aisa-attachment-label">Attached to your next question</p>
-                <div className="aisa-attachment-list">
-                  {uploadedFiles.map(file => {
-                    const kind = fileIconFor(file.name);
-                    return (
-                      <div key={file.id} className="aisa-attachment-card">
-                        <span className={cn('aisa-attachment-icon', fileBadgeClass[kind])}>
+            {selectedDocuments.length > 0 ? (
+              <div className="mb-2.5 flex flex-wrap gap-2" aria-live="polite" aria-label="Attached document">
+                {selectedDocuments.map(file => {
+                  const kind = fileIconFor(file.name);
+                  return (
+                    <div
+                      key={file.id}
+                      className="aisa-attachment-card !max-w-full w-full border border-emerald-300 dark:border-emerald-800/80 bg-emerald-50/90 dark:bg-emerald-950/60 shadow-xs flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-xl transition-all"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className={cn('aisa-attachment-icon shrink-0', fileBadgeClass[kind])}>
                           {kind === 'pdf' ? <FileText className="h-4 w-4" /> : kind === 'text' ? 'TXT' : kind.toUpperCase()}
                         </span>
-                        <span className="aisa-attachment-meta">
-                          <span className="aisa-attachment-name">{file.name}</span>
-                          <span className="aisa-attachment-size flex items-center gap-1">
-                            {file.status === 'ready' ? (
-                              <>
-                                {formatBytes(file.size)} <span aria-hidden="true">·</span> Ready
-                              </>
-                            ) : (
-                              <>
-                                <LoaderCircle className="h-3 w-3 animate-spin text-primary-500" />
-                                Indexing…
-                              </>
-                            )}
+                        <div className="min-w-0 flex flex-col">
+                          <span className="aisa-attachment-name font-semibold text-xs text-neutral-900 dark:text-neutral-100 truncate" title={file.name}>
+                            {file.name}
                           </span>
-                        </span>
+                          <span className="aisa-attachment-size flex items-center gap-1.5 text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5">
+                            {file.status === 'ready' ? (
+                              <span className="inline-flex items-center gap-1 font-bold text-emerald-700 dark:text-emerald-400 text-[10px] uppercase">
+                                <CheckCircle2 className="h-3 w-3" /> READY
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-primary-600 dark:text-primary-400 font-medium text-[10px]">
+                                <LoaderCircle className="h-3 w-3 animate-spin" />
+                                Indexing…
+                              </span>
+                            )}
+                            <span className="text-neutral-300 dark:text-neutral-600">·</span>
+                            <span>~{file.pages || 1} page{(file.pages || 1) === 1 ? '' : 's'}</span>
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
                         <button
                           type="button"
-                          onClick={() => removeUploadedFile(file.id)}
-                          className="aisa-attachment-remove"
-                          title={`Remove ${file.name}`}
-                          aria-label={`Remove ${file.name}`}
+                          onClick={() => setSourcesOpen(true)}
+                          className="text-xs text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 hover:underline font-semibold flex items-center gap-1"
                         >
-                          <X className="h-3.5 w-3.5" />
+                          Change selection
+                        </button>
+                        <span className="text-neutral-300 dark:text-neutral-600">·</span>
+                        <button
+                          type="button"
+                          onClick={() => toggleDocSelection(file.id)}
+                          className="text-xs text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200 hover:underline font-medium"
+                        >
+                          Detach
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleDocSelection(file.id)}
+                          aria-label={`Detach and close ${file.name}`}
+                          title="Close / detach document"
+                          className="grid h-6 w-6 place-items-center rounded-md text-neutral-400 hover:text-rose-600 hover:bg-rose-100/60 dark:hover:bg-rose-950/40 dark:hover:text-rose-400 transition-colors ml-0.5"
+                        >
+                          <X className="h-4 w-4" />
                         </button>
                       </div>
-                    );
-                  })}
-                </div>
+                    </div>
+                  );
+                })}
               </div>
-            )}
+            ) : readyDocuments.length > 0 ? (
+              <div className="px-4 py-2.5 bg-neutral-100/80 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl flex items-center justify-between text-xs text-neutral-600 dark:text-neutral-300 mb-2.5">
+                <span className="flex items-center gap-2">
+                  <Database className="h-3.5 w-3.5 text-primary-600 dark:text-primary-400 shrink-0" />
+                  <span>No document attached — question will search all {readyDocuments.length} ready documents in your account</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSourcesOpen(true)}
+                  className="font-semibold text-primary-600 dark:text-primary-400 hover:underline flex items-center gap-1 shrink-0"
+                >
+                  <Paperclip className="h-3 w-3" />
+                  <span>Attach document</span>
+                </button>
+              </div>
+            ) : null}
 
             <div className="aisa-composer">
               <button
@@ -2180,7 +2923,7 @@ export function StudentAIAssistant() {
                     send(input);
                   }
                 }}
-                placeholder="Ask anything from your documentsâ€¦"
+                placeholder="Ask anything from your documents…"
                 className="aisa-composer-textarea"
                 aria-label="Message EduRAG Assistant"
                 rows={1}

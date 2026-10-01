@@ -4,6 +4,8 @@ import LandingPage from '@/pages/LandingPage';
 import LoginPage from '@/pages/LoginPage';
 import SignupPage from '@/pages/SignupPage';
 import DashboardShell from '@/components/DashboardShell';
+import { DashboardProvider } from '@/context/DashboardContext';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { clearCurrentAccount, getCurrentAccount, setCurrentAccount, syncAccountsFromBackend, type AuthAccount } from '@/lib/auth';
 
 // Student pages
@@ -192,6 +194,7 @@ export default function App() {
   const PageComponent = pages[route.page] ?? pages.dashboard;
 
   return (
+    <DashboardProvider>
       <DashboardShell
         role={activeRole}
         activePage={route.page}
@@ -203,11 +206,14 @@ export default function App() {
           goTo({ view: 'landing', role: null, page: 'dashboard', loginRole: null });
         }}
       >
-        <PageComponent
-          onNavigate={(nextPage: string) => {
-            goTo({ view: 'dashboard', role: activeRole, page: nextPage, loginRole: activeRole });
-          }}
-        />
+        <ErrorBoundary key={`${activeRole}-${route.page}`}>
+          <PageComponent
+            onNavigate={(nextPage: string) => {
+              goTo({ view: 'dashboard', role: activeRole, page: nextPage, loginRole: activeRole });
+            }}
+          />
+        </ErrorBoundary>
       </DashboardShell>
+    </DashboardProvider>
   );
 }
